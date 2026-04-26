@@ -111,7 +111,7 @@ is aimed at network administrators who manage edge server settings.
 
 ## Rewritten user story
 As a network administrator, I want the ability to configure QUIC on the edge 
-server, so that I can enhance performance and reduce latency for end users.
+server, so that protocol behavior can be configured and evaluated against defined performance goals.
 
 ## Missing information
 - Specific configuration options for QUIC
