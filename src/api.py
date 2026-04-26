@@ -74,9 +74,7 @@ class HealthResponse(BaseModel):
 class JiraCommentResponse(BaseModel):
     """Response body for /analyze/jira-comment endpoint."""
     issue_key: Optional[str] = None
-    readiness_score: int
-    recommendation: str
-    comment: str
+    jira_comment: str
 
 
 class ConfluencePageResponse(BaseModel):
@@ -380,9 +378,7 @@ async def analyze_jira_comment(
     
     return JiraCommentResponse(
         issue_key=request.issue_key,
-        readiness_score=report.readiness_score,
-        recommendation=report.recommendation.value if report.recommendation else "unknown",
-        comment=comment
+        jira_comment=comment
     )
 
 

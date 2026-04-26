@@ -113,11 +113,9 @@ def test_jira_comment_endpoint_demo_mode():
     data = response.json()
     
     assert data["issue_key"] == "QA-456"
-    assert "readiness_score" in data
-    assert "recommendation" in data
-    assert "comment" in data
+    assert "jira_comment" in data
     
-    comment = data["comment"]
+    comment = data["jira_comment"]
     assert "h3. AI Requirement Readiness Analysis" in comment
     assert "Readiness Score:" in comment
     assert "Recommendation:" in comment
@@ -134,7 +132,7 @@ def test_jira_comment_endpoint_contains_sections():
     )
     assert response.status_code == 200
     data = response.json()
-    comment = data["comment"]
+    comment = data["jira_comment"]
     
     assert "Clarification Questions" in comment or "Missing Information" in comment
     assert "AI Note:" in comment or "Human review" in comment
