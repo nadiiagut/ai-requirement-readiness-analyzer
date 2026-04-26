@@ -1,0 +1,8 @@
+{
+  "issue_key": "SEC-203",
+  "title": "Add suspicious login notification",
+  "description": "Notify users when suspicious login activity is detected. Admins should also be able to review suspicious events.",
+  "issue_type": "Story",
+  "priority": "High",
+  "labels": ["security", "notifications", "admin-portal"]
+}

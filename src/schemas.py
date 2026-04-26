@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, model_validator
-from typing import List, Optional
+from typing import ClassVar, Dict, List, Optional
 from enum import Enum
 
 
@@ -63,13 +63,36 @@ class SuggestedTestScenario(BaseModel):
 
 
 class ScoreBreakdown(BaseModel):
-    clarity: int = Field(ge=0, le=100)
-    acceptance_criteria_quality: int = Field(ge=0, le=100)
-    testability: int = Field(ge=0, le=100)
-    edge_case_coverage: int = Field(ge=0, le=100)
-    dependency_clarity: int = Field(ge=0, le=100)
-    risk_visibility: int = Field(ge=0, le=100)
-    observability_expectations: int = Field(ge=0, le=100)
+    clarity: int = Field(default=0)
+    acceptance_criteria_quality: int = Field(default=0)
+    testability: int = Field(default=0)
+    edge_case_coverage: int = Field(default=0)
+    dependency_clarity: int = Field(default=0)
+    risk_visibility: int = Field(default=0)
+    observability_expectations: int = Field(default=0)
+
+    # Weights for each dimension (max contribution to total score)
+    WEIGHTS: ClassVar[Dict[str, int]] = {
+        "clarity": 20,
+        "acceptance_criteria_quality": 20,
+        "testability": 20,
+        "edge_case_coverage": 15,
+        "dependency_clarity": 10,
+        "risk_visibility": 10,
+        "observability_expectations": 5,
+    }
+
+    @model_validator(mode="after")
+    def clamp_scores(self) -> "ScoreBreakdown":
+        """Clamp all score values to 0-100 range."""
+        self.clarity = max(0, min(100, self.clarity))
+        self.acceptance_criteria_quality = max(0, min(100, self.acceptance_criteria_quality))
+        self.testability = max(0, min(100, self.testability))
+        self.edge_case_coverage = max(0, min(100, self.edge_case_coverage))
+        self.dependency_clarity = max(0, min(100, self.dependency_clarity))
+        self.risk_visibility = max(0, min(100, self.risk_visibility))
+        self.observability_expectations = max(0, min(100, self.observability_expectations))
+        return self
 
     def average(self) -> float:
         values = [
@@ -84,44 +107,40 @@ class ScoreBreakdown(BaseModel):
         return sum(values) / len(values)
 
     def weighted_score(self) -> int:
-        weights = {
-            "clarity": 20,
-            "acceptance_criteria_quality": 20,
-            "testability": 20,
-            "edge_case_coverage": 15,
-            "dependency_clarity": 10,
-            "risk_visibility": 10,
-            "observability_expectations": 5,
-        }
+        """
+        Calculate weighted score based on dimension weights.
+        Each dimension contributes (value/100) * weight to the total.
+        Total max = 100.
+        """
         weighted = (
-            self.clarity * weights["clarity"]
-            + self.acceptance_criteria_quality * weights["acceptance_criteria_quality"]
-            + self.testability * weights["testability"]
-            + self.edge_case_coverage * weights["edge_case_coverage"]
-            + self.dependency_clarity * weights["dependency_clarity"]
-            + self.risk_visibility * weights["risk_visibility"]
-            + self.observability_expectations * weights["observability_expectations"]
+            (self.clarity / 100) * self.WEIGHTS["clarity"]
+            + (self.acceptance_criteria_quality / 100) * self.WEIGHTS["acceptance_criteria_quality"]
+            + (self.testability / 100) * self.WEIGHTS["testability"]
+            + (self.edge_case_coverage / 100) * self.WEIGHTS["edge_case_coverage"]
+            + (self.dependency_clarity / 100) * self.WEIGHTS["dependency_clarity"]
+            + (self.risk_visibility / 100) * self.WEIGHTS["risk_visibility"]
+            + (self.observability_expectations / 100) * self.WEIGHTS["observability_expectations"]
         )
-        return int(round(weighted / 100))
+        return int(round(weighted))
 
 
 class RequirementReadinessReport(BaseModel):
     original_requirement: str
     summary: str
     rewritten_user_story: str
-    readiness_score: int = Field(ge=0, le=100)
+    readiness_score: int = Field(default=0)
     recommendation: Optional[RequirementReadinessRecommendation] = None
-    score_breakdown: ScoreBreakdown
-    missing_information: List[str]
-    acceptance_criteria: List[str]
-    edge_cases: List[str]
-    product_risks: List[str]
-    qa_risks: List[str]
-    technical_risks: List[str]
-    suggested_test_scenarios: List[SuggestedTestScenario]
-    automation_candidates: List[str]
-    clarification_questions: List[str]
-    human_review_notes: List[str]
+    score_breakdown: ScoreBreakdown = Field(default_factory=ScoreBreakdown)
+    missing_information: List[str] = Field(default_factory=list)
+    acceptance_criteria: List[str] = Field(default_factory=list)
+    edge_cases: List[str] = Field(default_factory=list)
+    product_risks: List[str] = Field(default_factory=list)
+    qa_risks: List[str] = Field(default_factory=list)
+    technical_risks: List[str] = Field(default_factory=list)
+    suggested_test_scenarios: List[SuggestedTestScenario] = Field(default_factory=list)
+    automation_candidates: List[str] = Field(default_factory=list)
+    clarification_questions: List[str] = Field(default_factory=list)
+    human_review_notes: List[str] = Field(default_factory=list)
 
     @staticmethod
     def derive_recommendation(score: int) -> RequirementReadinessRecommendation:
@@ -134,14 +153,32 @@ class RequirementReadinessReport(BaseModel):
         return RequirementReadinessRecommendation.NOT_READY
 
     @model_validator(mode="after")
-    def validate_breakdown_and_recommendation(self) -> "RequirementReadinessReport":
-        approx_score = self.score_breakdown.weighted_score()
-        if abs(approx_score - self.readiness_score) > 15:
-            raise ValueError(
-                "score_breakdown weighted score should approximately match readiness_score "
-                f"(breakdown_weighted={approx_score}, readiness_score={self.readiness_score})"
-            )
+    def calculate_score_and_recommendation(self) -> "RequirementReadinessReport":
+        """
+        Auto-calculate readiness_score from score_breakdown.
+        Add warning if model-provided score differs significantly.
+        Derive recommendation from final calculated score.
+        """
+        calculated_score = self.score_breakdown.weighted_score()
+        model_score = self.readiness_score
 
-        if self.recommendation is None:
-            self.recommendation = self.derive_recommendation(self.readiness_score)
+        # Clamp model score to valid range before comparison
+        model_score_clamped = max(0, min(100, model_score))
+
+        # Check if adjustment is needed
+        if model_score != model_score_clamped or abs(calculated_score - model_score_clamped) > 5:
+            warning = (
+                f"Score adjusted: model provided {model_score}, "
+                f"calculated from breakdown is {calculated_score}. "
+                f"Using calculated score."
+            )
+            if warning not in self.human_review_notes:
+                self.human_review_notes = list(self.human_review_notes) + [warning]
+
+        # Always use calculated score from breakdown
+        self.readiness_score = calculated_score
+
+        # Derive recommendation from final score
+        self.recommendation = self.derive_recommendation(self.readiness_score)
+
         return self

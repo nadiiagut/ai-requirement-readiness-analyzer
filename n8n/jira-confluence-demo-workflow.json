@@ -1,0 +1,305 @@
+{
+  "name": "AI Requirement Analyzer - Jira & Confluence Demo",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "resource": "issue",
+        "operation": "get",
+        "issueKey": "QA-123"
+      },
+      "id": "jira-get-issue",
+      "name": "Jira Get Issue",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "placeholder-jira-credential-id",
+          "name": "Jira Trial Credential"
+        }
+      },
+      "notes": "CHANGE ME: Update issueKey to your actual Jira issue (e.g., QA-1)"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "issue_key",
+              "name": "issue_key",
+              "value": "={{ $json.key }}",
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "value": "={{ $json.fields.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "description",
+              "name": "description",
+              "value": "={{ $json.fields.description || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "issue_type",
+              "name": "issue_type",
+              "value": "={{ $json.fields.issuetype?.name || 'Story' }}",
+              "type": "string"
+            },
+            {
+              "id": "priority",
+              "name": "priority",
+              "value": "={{ $json.fields.priority?.name || 'Medium' }}",
+              "type": "string"
+            },
+            {
+              "id": "labels",
+              "name": "labels",
+              "value": "={{ $json.fields.labels || [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-fields",
+      "name": "Extract Issue Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/analyze",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "demo_mode",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issue_key: $json.issue_key, title: $json.title, description: $json.description, issue_type: $json.issue_type, priority: $json.priority, labels: $json.labels }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "analyze-full",
+      "name": "Analyze Requirement",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300],
+      "notes": "CHANGE ME: Set demo_mode=false for real LLM analysis (requires OPENAI_API_KEY)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/analyze/jira-comment",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "demo_mode",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issue_key: $('Extract Issue Fields').item.json.issue_key, title: $('Extract Issue Fields').item.json.title, description: $('Extract Issue Fields').item.json.description, issue_type: $('Extract Issue Fields').item.json.issue_type, priority: $('Extract Issue Fields').item.json.priority, labels: $('Extract Issue Fields').item.json.labels }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-jira-comment",
+      "name": "Get Jira Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200],
+      "notes": "CHANGE ME: Set demo_mode=false for real LLM analysis"
+    },
+    {
+      "parameters": {
+        "resource": "issue",
+        "operation": "update",
+        "issueKey": "={{ $('Extract Issue Fields').item.json.issue_key }}",
+        "updateFields": {
+          "comment": "={{ $json.comment }}"
+        }
+      },
+      "id": "jira-add-comment",
+      "name": "Jira Add Comment",
+      "type": "n8n-nodes-base.jira",
+      "typeVersion": 1,
+      "position": [1340, 200],
+      "credentials": {
+        "jiraSoftwareCloudApi": {
+          "id": "placeholder-jira-credential-id",
+          "name": "Jira Trial Credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/analyze/confluence-page",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "demo_mode",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issue_key: $('Extract Issue Fields').item.json.issue_key, title: $('Extract Issue Fields').item.json.title, description: $('Extract Issue Fields').item.json.description, issue_type: $('Extract Issue Fields').item.json.issue_type, priority: $('Extract Issue Fields').item.json.priority, labels: $('Extract Issue Fields').item.json.labels }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "get-confluence-page",
+      "name": "Get Confluence Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 400],
+      "notes": "CHANGE ME: Set demo_mode=false for real LLM analysis"
+    },
+    {
+      "parameters": {
+        "resource": "content",
+        "operation": "create",
+        "spaceKey": "QA",
+        "title": "={{ $json.page_title }}",
+        "bodyContent": "={{ $json.page_body }}",
+        "additionalFields": {
+          "contentType": "page"
+        }
+      },
+      "id": "confluence-create-page",
+      "name": "Confluence Create Page",
+      "type": "n8n-nodes-base.confluence",
+      "typeVersion": 1,
+      "position": [1340, 400],
+      "credentials": {
+        "confluenceApi": {
+          "id": "placeholder-confluence-credential-id",
+          "name": "Confluence Trial Credential"
+        }
+      },
+      "notes": "CHANGE ME: Update spaceKey to your Confluence space (e.g., QA, DEV, DOCS)"
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Jira Get Issue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira Get Issue": {
+      "main": [
+        [
+          {
+            "node": "Extract Issue Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Issue Fields": {
+      "main": [
+        [
+          {
+            "node": "Analyze Requirement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Requirement": {
+      "main": [
+        [
+          {
+            "node": "Get Jira Comment",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Confluence Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Jira Comment": {
+      "main": [
+        [
+          {
+            "node": "Jira Add Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Confluence Page": {
+      "main": [
+        [
+          {
+            "node": "Confluence Create Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "instanceId": "placeholder-instance-id"
+  },
+  "pinData": {},
+  "versionId": "1.0.0",
+  "triggerCount": 0
+}

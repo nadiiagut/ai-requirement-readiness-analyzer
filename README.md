@@ -278,9 +278,118 @@ echo "requirement text" | python -m src.main --stdin --format json --stdout --qu
 
 ---
 
+## REST API
+
+The analyzer is also available as a FastAPI service for integration with n8n, Jira, and other automation tools.
+
+### Start the API Server
+
+```bash
+uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| POST | `/analyze` | Full structured report |
+| POST | `/analyze/jira-comment` | Jira-formatted comment |
+| POST | `/analyze/confluence-page` | Confluence page content |
+
+### Request Payload (all POST endpoints)
+
+All analysis endpoints accept Jira-like payload:
+
+```json
+{
+  "issue_key": "QA-123",
+  "title": "Delayed AC charging",
+  "description": "User should be able to delay AC charging by 4 hours",
+  "issue_type": "Story",
+  "priority": "High",
+  "labels": ["ev-charging", "backend"]
+}
+```
+
+Only `title` and `description` are required. Other fields are optional.
+
+### POST /analyze
+
+Returns full structured report for programmatic processing.
+
+```bash
+curl -X POST "http://localhost:8000/analyze?demo_mode=true" \
+  -H "Content-Type: application/json" \
+  -d '{"issue_key": "QA-123", "title": "Delayed AC charging", "description": "User should be able to delay AC charging by 4 hours"}'
+```
+
+### POST /analyze/jira-comment
+
+Returns Atlassian wiki markup ready to post as a Jira comment.
+
+```bash
+curl -X POST "http://localhost:8000/analyze/jira-comment?demo_mode=true" \
+  -H "Content-Type: application/json" \
+  -d '{"issue_key": "QA-123", "title": "Delayed AC charging", "description": "..."}'
+```
+
+**Response:**
+```json
+{
+  "issue_key": "QA-123",
+  "readiness_score": 34,
+  "recommendation": "not_ready",
+  "comment": "{panel:title=AI Requirement Readiness Analysis|borderColor=#red}..."
+}
+```
+
+### POST /analyze/confluence-page
+
+Returns page title and XHTML body for Confluence REST API.
+
+```bash
+curl -X POST "http://localhost:8000/analyze/confluence-page?demo_mode=true" \
+  -H "Content-Type: application/json" \
+  -d '{"issue_key": "QA-123", "title": "Delayed AC charging", "description": "..."}'
+```
+
+**Response:**
+```json
+{
+  "issue_key": "QA-123",
+  "page_title": "QA-123: Requirement Readiness Report",
+  "page_body": "<ac:structured-macro ac:name=\"panel\">..."
+}
+```
+
+### Query Parameters (all endpoints)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `demo_mode` | `false` | Use sample output (no LLM call) |
+| `provider` | `openai` | LLM provider |
+
+### Interactive API Docs
+
+FastAPI auto-generates interactive docs:
+- **Swagger UI:** http://localhost:8000/docs
+- **ReDoc:** http://localhost:8000/redoc
+
+---
+
 ## Automation Examples
 
-### n8n Workflow
+### n8n Workflow (API)
+
+```
+[Jira Trigger: Issue Created]
+  → [HTTP Request: POST to /analyze with issue_key, title, description]
+  → [Jira: Add Comment with readiness score and recommendations]
+  → [Confluence: Create page with full report]
+```
+
+### n8n Workflow (CLI)
 
 ```
 [Jira Trigger: Issue Created]

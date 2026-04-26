@@ -1,0 +1,8 @@
+{
+  "issue_key": "INFRA-891",
+  "title": "Enable QUIC configuration for edge server",
+  "description": "Allow operators to enable QUIC for selected services. It should improve performance and be easy to roll back if problems occur.",
+  "issue_type": "Story",
+  "priority": "Medium",
+  "labels": ["infrastructure", "edge", "performance"]
+}

@@ -1,0 +1,319 @@
+{
+  "name": "AI Requirement Readiness Analyzer Demo",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "analyze-requirement",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "requirement-analyzer-demo"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "issue_key",
+              "name": "issue_key",
+              "value": "={{ $json.issue_key || $json.key || 'DEMO-001' }}",
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "value": "={{ $json.title || $json.summary || $json.fields?.summary || 'Untitled Requirement' }}",
+              "type": "string"
+            },
+            {
+              "id": "description",
+              "name": "description",
+              "value": "={{ $json.description || $json.fields?.description || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "issue_type",
+              "name": "issue_type",
+              "value": "={{ $json.issue_type || $json.fields?.issuetype?.name || 'Story' }}",
+              "type": "string"
+            },
+            {
+              "id": "priority",
+              "name": "priority",
+              "value": "={{ $json.priority || $json.fields?.priority?.name || 'Medium' }}",
+              "type": "string"
+            },
+            {
+              "id": "labels",
+              "name": "labels",
+              "value": "={{ $json.labels || $json.fields?.labels || [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "normalize-payload",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/analyze",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "demo_mode",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issue_key: $json.issue_key, title: $json.title, description: $json.description, issue_type: $json.issue_type, priority: $json.priority, labels: $json.labels }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "analyze-full",
+      "name": "Analyze Full Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/analyze/jira-comment",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "demo_mode",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issue_key: $('Normalize Payload').item.json.issue_key, title: $('Normalize Payload').item.json.title, description: $('Normalize Payload').item.json.description, issue_type: $('Normalize Payload').item.json.issue_type, priority: $('Normalize Payload').item.json.priority, labels: $('Normalize Payload').item.json.labels }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "analyze-jira",
+      "name": "Get Jira Comment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/analyze/confluence-page",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "demo_mode",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ issue_key: $('Normalize Payload').item.json.issue_key, title: $('Normalize Payload').item.json.title, description: $('Normalize Payload').item.json.description, issue_type: $('Normalize Payload').item.json.issue_type, priority: $('Normalize Payload').item.json.priority, labels: $('Normalize Payload').item.json.labels }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "analyze-confluence",
+      "name": "Get Confluence Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "issue_key",
+              "name": "issue_key",
+              "value": "={{ $('Analyze Full Report').item.json.issue_key }}",
+              "type": "string"
+            },
+            {
+              "id": "readiness_score",
+              "name": "readiness_score",
+              "value": "={{ $('Analyze Full Report').item.json.readiness_score }}",
+              "type": "number"
+            },
+            {
+              "id": "recommendation",
+              "name": "recommendation",
+              "value": "={{ $('Analyze Full Report').item.json.recommendation }}",
+              "type": "string"
+            },
+            {
+              "id": "summary",
+              "name": "summary",
+              "value": "={{ $('Analyze Full Report').item.json.report.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "jira_comment",
+              "name": "jira_comment",
+              "value": "={{ $('Get Jira Comment').item.json.comment }}",
+              "type": "string"
+            },
+            {
+              "id": "confluence_page_title",
+              "name": "confluence_page_title",
+              "value": "={{ $('Get Confluence Page').item.json.page_title }}",
+              "type": "string"
+            },
+            {
+              "id": "confluence_page_body",
+              "name": "confluence_page_body",
+              "value": "={{ $('Get Confluence Page').item.json.page_body }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "merge-results",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Payload": {
+      "main": [
+        [
+          {
+            "node": "Analyze Full Report",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Jira Comment",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Confluence Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Full Report": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Jira Comment": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Confluence Page": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "instanceId": "placeholder-instance-id"
+  },
+  "pinData": {},
+  "versionId": "1.0.0",
+  "triggerCount": 0
+}

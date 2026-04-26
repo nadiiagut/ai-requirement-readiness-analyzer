@@ -1,0 +1,8 @@
+{
+  "issue_key": "EV-142",
+  "title": "Delayed AC charging",
+  "description": "User should be able to delay AC charging by 4 hours. Charging should usually resume after power interruption, but sometimes user may need to reconnect the cable.",
+  "issue_type": "Story",
+  "priority": "High",
+  "labels": ["ev-charging", "mobile-app", "user-experience"]
+}
