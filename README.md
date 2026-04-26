@@ -10,6 +10,13 @@ A CLI tool that uses LLMs to analyze product requirements and generate structure
 
 **Human-in-the-loop by design** — this tool accelerates review, it doesn't replace human judgment.
 
+### This project demonstrates:
+- AI-assisted product requirement analysis
+- QA risk detection before implementation
+- Structured test planning
+- Human-in-the-loop AI governance
+- Automation-ready output for Jira/n8n/CI workflows
+
 ---
 
 ## The Problem
