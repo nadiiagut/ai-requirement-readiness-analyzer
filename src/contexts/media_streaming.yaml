@@ -1,0 +1,47 @@
+name: media_streaming
+description: Audio/video streaming and media delivery applications
+
+focus_areas:
+  - Adaptive bitrate streaming (ABR)
+  - Buffer management and playback continuity
+  - Codec support and transcoding
+  - Content delivery network (CDN) integration
+  - Digital Rights Management (DRM)
+  - Latency optimization (live vs VOD)
+  - Multi-device playback synchronization
+  - Quality of Experience (QoE) metrics
+
+risk_categories:
+  - Playback interruptions and buffering
+  - Audio/video sync issues
+  - DRM license failures
+  - CDN failover gaps
+  - Codec compatibility across devices
+  - Latency spikes in live streaming
+  - Bandwidth estimation errors
+
+typical_concerns:
+  - Supported video/audio codecs
+  - Resolution and bitrate ladder
+  - Seek and trick-play behavior
+  - Closed captions and subtitles
+  - Multi-audio track support
+  - Thumbnail/preview generation
+  - Playback analytics and telemetry
+  - Ad insertion points (if applicable)
+  - Offline download capabilities
+
+avoid_assumptions:
+  - Stable high-bandwidth connections
+  - Single device/platform target
+  - Text-only content handling
+  - Simple request/response patterns
+
+clarification_priorities:
+  - Target platforms and devices
+  - Supported codecs and containers
+  - Live vs on-demand requirements
+  - DRM requirements and providers
+  - Latency requirements (for live)
+  - CDN strategy and failover
+  - Analytics and QoE measurement needs

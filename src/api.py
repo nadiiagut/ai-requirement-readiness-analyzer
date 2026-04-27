@@ -16,6 +16,7 @@ from .prompt_builder import PromptBuilder
 from .schemas import RequirementReadinessReport
 from .jira_formatter import format_jira_comment
 from .confluence_formatter import format_confluence_page
+from .duplicate_detector import find_duplicates
 
 
 app = FastAPI(
@@ -114,6 +115,11 @@ class AnalyzeRequest(BaseModel):
         description="Jira labels",
         json_schema_extra={"example": ["ev-charging", "backend"]}
     )
+    domain_context: Optional[str] = Field(
+        default=None,
+        description="Domain context for analysis (e.g., control_panel, embedded_device, media_streaming). Defaults to generic_web if not specified.",
+        json_schema_extra={"example": "control_panel"}
+    )
 
 
 class AnalyzeResponse(BaseModel):
@@ -143,11 +149,59 @@ class ConfluencePageResponse(BaseModel):
     page_body: str
 
 
-def _get_demo_response(title: str, description: str) -> str:
+class CandidateIssue(BaseModel):
+    """A candidate issue for duplicate comparison."""
+    key: str = Field(..., description="Issue key (e.g., PROJ-123)")
+    title: str = Field(..., description="Issue title/summary")
+    description: str = Field(default="", description="Issue description")
+
+
+class DuplicateMatch(BaseModel):
+    """A matched duplicate or related issue."""
+    issue_key: str
+    title: str
+    match_type: str = Field(..., description="Type: duplicate, near_duplicate, conflicting, related")
+    confidence: float = Field(..., ge=0, le=1, description="Confidence score 0-1")
+    reason: str
+
+
+class DuplicateCheckRequest(BaseModel):
+    """Request body for /analyze/duplicates endpoint."""
+    issue_key: Optional[str] = Field(
+        default=None,
+        description="Key of the new issue (excluded from comparison)"
+    )
+    title: str = Field(..., description="Title of the requirement to check")
+    description: str = Field(default="", description="Description of the requirement")
+    candidates: List[CandidateIssue] = Field(
+        ...,
+        description="List of candidate issues to compare against",
+        min_length=1
+    )
+    threshold: float = Field(
+        default=0.5,
+        ge=0,
+        le=1,
+        description="Minimum similarity threshold for matches"
+    )
+
+
+class DuplicateCheckResponse(BaseModel):
+    """Response body for /analyze/duplicates endpoint."""
+    duplicates_found: bool = Field(..., description="True if probable duplicates detected")
+    probable_duplicates_count: int = Field(default=0)
+    near_duplicates_count: int = Field(default=0)
+    conflicts_count: int = Field(default=0)
+    top_matches: List[DuplicateMatch] = Field(default_factory=list)
+    recommendation: str
+
+
+def _get_demo_response(title: str, description: str, domain_context: Optional[str] = None) -> str:
     """
-    Generate a demo response based on input quality assessment.
+    Generate a demo response based on input quality assessment and domain context.
     
     Returns stricter scores for insufficient/poor quality input.
+    Context-aware responses for specific domains like control_panel.
     """
     requirement_text = f"{title}\n\n{description}"
     quality = _assess_input_quality(title, description)
@@ -313,75 +367,227 @@ def _get_demo_response(title: str, description: str) -> str:
             ]
         }
     else:
-        # Adequate input - standard demo response
-        demo_data = {
-            "original_requirement": requirement_text,
-            "summary": "This requirement provides a foundation but lacks specifics about scope, acceptance criteria, and edge cases. Clarification needed before development.",
-            "rewritten_user_story": "As a user, I want to perform the described action, so that the expected outcome can be achieved and validated against defined goals.",
-            "readiness_score": 34,
-            "recommendation": "not_ready",
-            "score_breakdown": {
-                "clarity": 40,
-                "acceptance_criteria_quality": 30,
-                "testability": 35,
-                "edge_case_coverage": 25,
-                "dependency_clarity": 45,
-                "risk_visibility": 35,
-                "observability_expectations": 25
-            },
-            "missing_information": [
-                "Specific scope and boundary of this feature",
-                "Target users and their roles",
-                "Success criteria and acceptance conditions",
-                "Dependencies on other systems or features",
-                "Performance expectations",
-                "Error handling requirements"
-            ],
-            "acceptance_criteria": [
-                "[ASSUMPTION] Feature can be enabled/disabled by authorized users",
-                "[ASSUMPTION] Invalid inputs are rejected with clear error messages",
-                "[NEEDS CLARIFICATION] Define specific success conditions"
-            ],
-            "edge_cases": [
-                "Invalid input format or out-of-range values",
-                "Concurrent access by multiple users",
-                "System under high load",
-                "Network interruption during processing"
-            ],
-            "product_risks": [
-                "Scope creep due to vague requirements",
-                "No defined user persona",
-                "Missing success metrics"
-            ],
-            "qa_risks": [
-                "Cannot write deterministic tests without specific acceptance criteria",
-                "Performance testing requires baseline metrics"
-            ],
-            "technical_risks": [
-                "Potential integration issues",
-                "Unknown dependencies may cause delays"
-            ],
-            "suggested_test_scenarios": [
-                {"title": "Basic functionality test", "type": "functional", "priority": "high", "description": "Verify core feature works with valid inputs"},
-                {"title": "Input validation test", "type": "functional", "priority": "high", "description": "Verify invalid inputs are rejected"},
-                {"title": "Error recovery test", "type": "negative", "priority": "medium", "description": "Verify graceful handling of failures"}
-            ],
-            "automation_candidates": [
-                "API tests for core endpoints",
-                "Regression test suite"
-            ],
-            "clarification_questions": [
-                "What is the exact scope of this feature?",
-                "Who are the primary users?",
-                "What are the specific acceptance criteria?",
-                "What dependencies exist?",
-                "What are the performance requirements?"
-            ],
-            "human_review_notes": [
-                "This requirement needs clarification before development",
-                "Recommend a refinement session to define scope and acceptance criteria"
-            ]
-        }
+        # Adequate input - context-aware demo response
+        if domain_context == "control_panel":
+            demo_data = {
+                "original_requirement": requirement_text,
+                "summary": "This requirement involves user management for a control panel. Critical security and access control details are missing.",
+                "rewritten_user_story": "As a system administrator, I want to manage user roles and permissions so that operators have appropriate access to control panel functions.",
+                "readiness_score": 32,
+                "recommendation": "not_ready",
+                "score_breakdown": {
+                    "clarity": 35,
+                    "acceptance_criteria_quality": 25,
+                    "testability": 30,
+                    "edge_case_coverage": 20,
+                    "dependency_clarity": 40,
+                    "risk_visibility": 35,
+                    "observability_expectations": 30
+                },
+                "missing_information": [
+                    "Complete RBAC permissions matrix for each role",
+                    "Password policy requirements (complexity, rotation, history)",
+                    "Session management rules (timeout, concurrent sessions)",
+                    "Audit logging requirements for user actions",
+                    "Security boundaries between admin and operator roles",
+                    "Multi-factor authentication requirements"
+                ],
+                "acceptance_criteria": [
+                    "[ASSUMPTION] Admin can create, modify, and delete operator accounts",
+                    "[ASSUMPTION] Operators cannot modify their own permission level",
+                    "[ASSUMPTION] All user management actions are logged with timestamp and actor",
+                    "[NEEDS CLARIFICATION] Define exact permissions for each role"
+                ],
+                "edge_cases": [
+                    "Admin attempts to delete their own account",
+                    "Last admin account deletion prevention",
+                    "Concurrent role modification conflicts",
+                    "Session behavior when permissions are revoked",
+                    "Password reset during active session"
+                ],
+                "product_risks": [
+                    "Insufficient role granularity may require rework",
+                    "Missing audit requirements could violate compliance",
+                    "Unclear permission boundaries risk security gaps"
+                ],
+                "qa_risks": [
+                    "Cannot test RBAC without complete permissions matrix",
+                    "Security testing requires defined authentication policies",
+                    "Audit log verification needs specified format and retention"
+                ],
+                "technical_risks": [
+                    "Session management complexity with multiple concurrent users",
+                    "Audit log storage and performance impact",
+                    "Secure credential storage implementation"
+                ],
+                "suggested_test_scenarios": [
+                    {"title": "Role-based access verification", "type": "functional", "priority": "high", "description": "Verify each role can only access permitted functions"},
+                    {"title": "Privilege escalation prevention", "type": "negative", "priority": "high", "description": "Verify operators cannot gain admin privileges"},
+                    {"title": "Audit log completeness", "type": "functional", "priority": "high", "description": "Verify all user actions are logged with required details"},
+                    {"title": "Session timeout enforcement", "type": "non_functional", "priority": "medium", "description": "Verify sessions expire after configured timeout"},
+                    {"title": "Concurrent session handling", "type": "functional", "priority": "medium", "description": "Verify behavior with multiple active sessions"}
+                ],
+                "automation_candidates": [
+                    "RBAC permission matrix verification tests",
+                    "Audit log format and completeness checks",
+                    "Session management regression tests"
+                ],
+                "clarification_questions": [
+                    "What specific permissions does each role (admin, operator) have?",
+                    "What actions require audit logging?",
+                    "What is the password policy (complexity, expiration, history)?",
+                    "What are the session timeout and concurrent session limits?",
+                    "Is multi-factor authentication required for any role?",
+                    "What approval workflow exists for creating new admin accounts?"
+                ],
+                "human_review_notes": [
+                    "Control panel user management requires detailed security specifications",
+                    "RBAC matrix must be defined before development",
+                    "Consider compliance requirements (SOC2, ISO27001) for audit logging"
+                ]
+            }
+        elif domain_context == "embedded_device":
+            demo_data = {
+                "original_requirement": requirement_text,
+                "summary": "This requirement targets an embedded system. Resource constraints and hardware considerations need clarification.",
+                "rewritten_user_story": "As a device operator, I want to configure the system so that it operates within defined hardware constraints.",
+                "readiness_score": 30,
+                "recommendation": "not_ready",
+                "score_breakdown": {
+                    "clarity": 35,
+                    "acceptance_criteria_quality": 25,
+                    "testability": 25,
+                    "edge_case_coverage": 20,
+                    "dependency_clarity": 35,
+                    "risk_visibility": 30,
+                    "observability_expectations": 25
+                },
+                "missing_information": [
+                    "Target hardware specifications (CPU, memory, storage)",
+                    "Real-time requirements and timing constraints",
+                    "Power consumption budget",
+                    "Communication protocols and interfaces",
+                    "Firmware update mechanism requirements",
+                    "Recovery procedures for failure scenarios"
+                ],
+                "acceptance_criteria": [
+                    "[ASSUMPTION] Operation within specified memory limits",
+                    "[ASSUMPTION] Graceful degradation on resource exhaustion",
+                    "[NEEDS CLARIFICATION] Define hardware platform specifications"
+                ],
+                "edge_cases": [
+                    "Memory exhaustion during operation",
+                    "Power loss during critical operation",
+                    "Communication timeout with external systems",
+                    "Firmware corruption detection and recovery",
+                    "Watchdog timer expiration scenarios"
+                ],
+                "product_risks": [
+                    "Unknown hardware constraints may force redesign",
+                    "Real-time requirements not specified",
+                    "Power budget undefined"
+                ],
+                "qa_risks": [
+                    "Testing requires target hardware availability",
+                    "Real-time behavior difficult to simulate",
+                    "Edge cases may require specialized test equipment"
+                ],
+                "technical_risks": [
+                    "Memory footprint may exceed available resources",
+                    "Timing constraints may not be achievable",
+                    "Hardware abstraction layer complexity"
+                ],
+                "suggested_test_scenarios": [
+                    {"title": "Memory usage verification", "type": "non_functional", "priority": "high", "description": "Verify operation within memory constraints"},
+                    {"title": "Power loss recovery", "type": "negative", "priority": "high", "description": "Verify system recovers correctly after power loss"},
+                    {"title": "Watchdog behavior", "type": "functional", "priority": "high", "description": "Verify watchdog timer triggers recovery correctly"}
+                ],
+                "automation_candidates": [
+                    "Memory usage monitoring tests",
+                    "Communication protocol conformance tests"
+                ],
+                "clarification_questions": [
+                    "What is the target hardware platform?",
+                    "What are the memory and storage constraints?",
+                    "What are the real-time timing requirements?",
+                    "What communication interfaces are available?",
+                    "What is the power budget?"
+                ],
+                "human_review_notes": [
+                    "Embedded requirements need hardware specifications before analysis",
+                    "Consider resource constraints in all design decisions"
+                ]
+            }
+        else:
+            # Default generic_web response
+            demo_data = {
+                "original_requirement": requirement_text,
+                "summary": "This requirement provides a foundation but lacks specifics about scope, acceptance criteria, and edge cases. Clarification needed before development.",
+                "rewritten_user_story": "As a user, I want to perform the described action, so that the expected outcome can be achieved and validated against defined goals.",
+                "readiness_score": 34,
+                "recommendation": "not_ready",
+                "score_breakdown": {
+                    "clarity": 40,
+                    "acceptance_criteria_quality": 30,
+                    "testability": 35,
+                    "edge_case_coverage": 25,
+                    "dependency_clarity": 45,
+                    "risk_visibility": 35,
+                    "observability_expectations": 25
+                },
+                "missing_information": [
+                    "Specific scope and boundary of this feature",
+                    "Target users and their roles",
+                    "Success criteria and acceptance conditions",
+                    "Dependencies on other systems or features",
+                    "Performance expectations",
+                    "Error handling requirements"
+                ],
+                "acceptance_criteria": [
+                    "[ASSUMPTION] Feature can be enabled/disabled by authorized users",
+                    "[ASSUMPTION] Invalid inputs are rejected with clear error messages",
+                    "[NEEDS CLARIFICATION] Define specific success conditions"
+                ],
+                "edge_cases": [
+                    "Invalid input format or out-of-range values",
+                    "Concurrent access by multiple users",
+                    "System under high load",
+                    "Network interruption during processing"
+                ],
+                "product_risks": [
+                    "Scope creep due to vague requirements",
+                    "No defined user persona",
+                    "Missing success metrics"
+                ],
+                "qa_risks": [
+                    "Cannot write deterministic tests without specific acceptance criteria",
+                    "Performance testing requires baseline metrics"
+                ],
+                "technical_risks": [
+                    "Potential integration issues",
+                    "Unknown dependencies may cause delays"
+                ],
+                "suggested_test_scenarios": [
+                    {"title": "Basic functionality test", "type": "functional", "priority": "high", "description": "Verify core feature works with valid inputs"},
+                    {"title": "Input validation test", "type": "functional", "priority": "high", "description": "Verify invalid inputs are rejected"},
+                    {"title": "Error recovery test", "type": "negative", "priority": "medium", "description": "Verify graceful handling of failures"}
+                ],
+                "automation_candidates": [
+                    "API tests for core endpoints",
+                    "Regression test suite"
+                ],
+                "clarification_questions": [
+                    "What is the exact scope of this feature?",
+                    "Who are the primary users?",
+                    "What are the specific acceptance criteria?",
+                    "What dependencies exist?",
+                    "What are the performance requirements?"
+                ],
+                "human_review_notes": [
+                    "This requirement needs clarification before development",
+                    "Recommend a refinement session to define scope and acceptance criteria"
+                ]
+            }
     
     return json.dumps(demo_data, indent=2)
 
@@ -391,10 +597,10 @@ def _analyze_requirement(request: AnalyzeRequest, demo_mode: bool, provider: str
     requirement_text = f"{request.title}\n\n{request.description}"
     
     if demo_mode:
-        raw_json = _get_demo_response(request.title, request.description)
+        raw_json = _get_demo_response(request.title, request.description, request.domain_context)
     else:
         try:
-            prompt = PromptBuilder().build_prompt(requirement_text)
+            prompt = PromptBuilder().build_prompt(requirement_text, domain_context=request.domain_context)
             raw_json = analyze_requirement(prompt, provider=provider)
         except MissingAPIKeyError as e:
             raise HTTPException(status_code=401, detail=str(e))
@@ -627,4 +833,49 @@ async def analyze_confluence_page(
         issue_key=request.issue_key,
         page_title=page["page_title"],
         page_body=page["page_body"]
+    )
+
+
+@app.post("/analyze/duplicates", response_model=DuplicateCheckResponse, tags=["Analysis"])
+async def check_duplicates(request: DuplicateCheckRequest):
+    """
+    Check for duplicate or related requirements in the backlog.
+    
+    Compares a new requirement against candidate backlog issues using
+    semantic intent matching (not just keyword matching).
+    
+    Detects:
+    - **Duplicates**: Same intent, different wording (confidence >= 0.8)
+    - **Near-duplicates**: Overlapping scope (confidence >= 0.6)
+    - **Conflicting**: Contradictory goals
+    - **Related**: Similar topics (confidence >= threshold)
+    
+    Flag confidence > 0.8 as probable duplicate requiring review.
+    """
+    candidates_dict = [
+        {
+            "key": c.key,
+            "title": c.title,
+            "description": c.description
+        }
+        for c in request.candidates
+    ]
+    
+    result = find_duplicates(
+        new_issue_key=request.issue_key,
+        new_title=request.title,
+        new_description=request.description,
+        candidates=candidates_dict,
+        threshold=request.threshold
+    )
+    
+    return DuplicateCheckResponse(
+        duplicates_found=result["duplicates_found"],
+        probable_duplicates_count=result["probable_duplicates_count"],
+        near_duplicates_count=result["near_duplicates_count"],
+        conflicts_count=result["conflicts_count"],
+        top_matches=[
+            DuplicateMatch(**match) for match in result["top_matches"]
+        ],
+        recommendation=result["recommendation"]
     )

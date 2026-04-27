@@ -1,0 +1,46 @@
+name: embedded_device
+description: Embedded systems and IoT device firmware/software
+
+focus_areas:
+  - Resource constraints (memory, CPU, storage)
+  - Real-time operation requirements
+  - Hardware abstraction layers
+  - Firmware update mechanisms (OTA)
+  - Watchdog timers and recovery
+  - Power management and sleep modes
+  - Communication protocols (CAN, MQTT, BLE, etc.)
+  - Boot sequences and initialization
+
+risk_categories:
+  - Memory leaks and buffer overflows
+  - Real-time deadline violations
+  - Firmware corruption during updates
+  - Hardware failure handling
+  - Power loss during critical operations
+  - Communication protocol compatibility
+  - Resource exhaustion
+
+typical_concerns:
+  - Memory footprint and allocation strategy
+  - Interrupt handling and priorities
+  - Persistent storage management
+  - Factory reset procedures
+  - Diagnostic and debug interfaces
+  - Hardware self-test routines
+  - Graceful degradation modes
+  - Recovery from unexpected states
+
+avoid_assumptions:
+  - Unlimited memory or storage
+  - Always-on network connectivity
+  - User interface availability
+  - Cloud service dependencies for core functions
+
+clarification_priorities:
+  - Target hardware specifications
+  - Memory and storage constraints
+  - Real-time requirements and deadlines
+  - Power budget and modes
+  - Communication interfaces available
+  - Update and recovery requirements
+  - Operating environment conditions

@@ -1,0 +1,44 @@
+name: control_panel
+description: Industrial/administrative control panel application
+
+focus_areas:
+  - Role-Based Access Control (RBAC)
+  - Permissions matrix and privilege levels
+  - Audit logging and traceability
+  - Session management and timeout policies
+  - Password policies and credential management
+  - Security boundaries between user roles
+  - Action confirmation for critical operations
+  - Multi-factor authentication considerations
+
+risk_categories:
+  - Unauthorized access to sensitive controls
+  - Privilege escalation vulnerabilities
+  - Audit trail gaps
+  - Session hijacking
+  - Insufficient access control granularity
+  - Missing confirmation for destructive actions
+
+typical_concerns:
+  - User role definitions (admin, operator, viewer, etc.)
+  - Permission inheritance and hierarchy
+  - Audit log retention and format
+  - Session timeout and concurrent session limits
+  - Password complexity and rotation policies
+  - IP whitelisting or network restrictions
+  - Emergency access procedures
+  - Role assignment workflows
+
+avoid_assumptions:
+  - Generic user profile CRUD patterns
+  - Social features or sharing
+  - Public-facing UI concerns
+  - Marketing or analytics integrations
+
+clarification_priorities:
+  - Complete list of user roles and their permissions
+  - Critical vs non-critical operations classification
+  - Audit requirements and compliance needs
+  - Session and authentication policies
+  - Network access restrictions
+  - Approval workflows for sensitive actions

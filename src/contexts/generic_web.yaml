@@ -1,0 +1,37 @@
+name: generic_web
+description: Generic web application context (default)
+
+focus_areas:
+  - User experience and UI/UX considerations
+  - API design and integration patterns
+  - Data validation and error handling
+  - Performance and scalability
+  - Security basics (authentication, authorization)
+  - Browser compatibility
+  - Responsive design considerations
+
+risk_categories:
+  - User adoption and usability
+  - Data integrity and validation
+  - Third-party service dependencies
+  - Performance under load
+  - Cross-browser compatibility
+
+typical_concerns:
+  - Input validation
+  - Error messaging
+  - Loading states
+  - Pagination and data handling
+  - Session management
+  - Form handling
+
+avoid_assumptions:
+  - Hardware-specific constraints
+  - Real-time system requirements
+  - Embedded system limitations
+
+clarification_priorities:
+  - Target user personas
+  - Expected traffic patterns
+  - Integration requirements
+  - Browser/device support matrix
