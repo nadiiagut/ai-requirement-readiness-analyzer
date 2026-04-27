@@ -6,10 +6,10 @@ designed for integration with n8n, Jira automation, and other tools.
 """
 
 import json
-from typing import List, Optional
+from typing import Any, List, Optional, Union
 
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .llm_client import LLMClientError, MissingAPIKeyError, analyze_requirement
 from .prompt_builder import PromptBuilder
@@ -17,6 +17,7 @@ from .schemas import RequirementReadinessReport
 from .jira_formatter import format_jira_comment
 from .confluence_formatter import format_confluence_page
 from .duplicate_detector import find_duplicates
+from .jira_adf import extract_text_from_adf
 
 
 app = FastAPI(
@@ -96,8 +97,9 @@ class AnalyzeRequest(BaseModel):
         description="Requirement title or summary",
         json_schema_extra={"example": "Delayed AC charging"}
     )
-    description: str = Field(
-        description="Full requirement description",
+    description: Union[str, dict, None] = Field(
+        default="",
+        description="Full requirement description. Can be plain text or Jira ADF (Atlassian Document Format) JSON.",
         json_schema_extra={"example": "User should be able to delay AC charging by 4 hours..."}
     )
     issue_type: Optional[str] = Field(
@@ -120,6 +122,12 @@ class AnalyzeRequest(BaseModel):
         description="Domain context for analysis (e.g., control_panel, embedded_device, media_streaming). Defaults to generic_web if not specified.",
         json_schema_extra={"example": "control_panel"}
     )
+
+    @field_validator('description', mode='before')
+    @classmethod
+    def convert_adf_to_text(cls, v: Any) -> str:
+        """Convert ADF description to plain text."""
+        return extract_text_from_adf(v)
 
 
 class AnalyzeResponse(BaseModel):

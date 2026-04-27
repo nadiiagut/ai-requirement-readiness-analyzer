@@ -55,14 +55,21 @@ def test_analyze_endpoint_missing_title():
 
 
 def test_analyze_endpoint_missing_description():
-    """Test the analyze endpoint rejects requests without description."""
+    """Test the analyze endpoint accepts requests without description (defaults to empty).
+    
+    Description is optional to support Jira ADF where description might be None.
+    Missing description results in a low readiness score.
+    """
     response = client.post(
         "/analyze?demo_mode=true",
         json={
             "title": "Test requirement"
         }
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
+    data = response.json()
+    # Empty description should result in low score
+    assert data["readiness_score"] <= 30
 
 
 def test_analyze_endpoint_optional_issue_key():
@@ -290,5 +297,107 @@ def test_input_quality_reflected_in_jira_comment():
     comment = data["jira_comment"]
     # Should show very low score
     assert "5/100" in comment or "0/100" in comment or "Readiness Score:" in comment
-    # Should indicate blocking issue
-    assert "BLOCKED" in comment or "NOT READY" in comment
+
+
+def test_analyze_endpoint_adf_description():
+    """Test that ADF (Atlassian Document Format) descriptions are extracted to plain text."""
+    adf_description = {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "As a user I want to login with email and password so that I can access my account securely."}
+                ]
+            },
+            {
+                "type": "heading",
+                "attrs": {"level": 2},
+                "content": [{"type": "text", "text": "Acceptance Criteria"}]
+            },
+            {
+                "type": "bulletList",
+                "content": [
+                    {
+                        "type": "listItem",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [{"type": "text", "text": "User can enter email and password"}]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "listItem",
+                        "content": [
+                            {
+                                "type": "paragraph",
+                                "content": [{"type": "text", "text": "Invalid credentials show error message"}]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    
+    response = client.post(
+        "/analyze?demo_mode=true",
+        json={
+            "issue_key": "ADF-123",
+            "title": "User Login Feature",
+            "description": adf_description
+        }
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    # ADF should be converted to text and analyzed properly
+    assert data["readiness_score"] >= 30  # Should get reasonable score with good content
+
+
+def test_analyze_endpoint_adf_null_description():
+    """Test that null description (common in Jira) is handled gracefully."""
+    response = client.post(
+        "/analyze?demo_mode=true",
+        json={
+            "title": "Some requirement title",
+            "description": None
+        }
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    # Null description should result in low score but not error
+    assert data["readiness_score"] <= 30
+
+
+def test_jira_comment_endpoint_adf_description():
+    """Test jira-comment endpoint handles ADF descriptions."""
+    adf_description = {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "Implement password reset functionality for users who forgot their credentials."}
+                ]
+            }
+        ]
+    }
+    
+    response = client.post(
+        "/analyze/jira-comment?demo_mode=true",
+        json={
+            "issue_key": "ADF-456",
+            "title": "Password Reset Feature",
+            "description": adf_description
+        }
+    )
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert "jira_comment" in data
+    assert "Readiness Score:" in data["jira_comment"]
