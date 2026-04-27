@@ -296,6 +296,8 @@ uvicorn src.api:app --reload --host 0.0.0.0 --port 8000
 | POST | `/analyze` | Full structured report |
 | POST | `/analyze/jira-comment` | Jira-formatted comment |
 | POST | `/analyze/confluence-page` | Confluence page content |
+| POST | `/analyze/acceptance-criteria` | Generate AC, edge cases, test scenarios |
+| POST | `/analyze/duplicates` | Check for duplicate requirements |
 
 ### Request Payload (all POST endpoints)
 
@@ -362,6 +364,48 @@ curl -X POST "http://localhost:8000/analyze/confluence-page?demo_mode=true" \
   "page_body": "<ac:structured-macro ac:name=\"panel\">..."
 }
 ```
+
+### POST /analyze/acceptance-criteria
+
+Generate acceptance criteria, edge cases, test scenarios, and automation candidates.
+
+```bash
+curl -X POST "http://localhost:8000/analyze/acceptance-criteria" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "User Login", "description": "Users can log in with email and password", "domain_context": "control_panel"}'
+```
+
+**Response:**
+```json
+{
+  "issue_key": null,
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "given": "The user is authenticated and has appropriate permissions",
+      "when": "The user performs the main action described",
+      "then": "The system completes the operation and provides confirmation"
+    }
+  ],
+  "edge_cases": [
+    "Session expires during multi-step operation",
+    "Concurrent modification by another admin user",
+    "User lacks partial permissions for nested operation"
+  ],
+  "test_scenarios": [
+    {"title": "Verify operation completes with valid permissions", "type": "positive"},
+    {"title": "Verify access denied for insufficient permissions", "type": "negative"},
+    {"title": "Verify behavior at maximum resource limit", "type": "boundary"}
+  ],
+  "automation_candidates": [
+    "Permission verification for all role types",
+    "Input validation with boundary values",
+    "API response schema validation"
+  ]
+}
+```
+
+**Domain contexts:** `control_panel`, `embedded_device`, `media_streaming`, `generic_web` (default)
 
 ### Query Parameters (all endpoints)
 

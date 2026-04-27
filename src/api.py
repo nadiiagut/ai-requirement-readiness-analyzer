@@ -212,18 +212,10 @@ class AcceptanceCriterion(BaseModel):
     then: str = Field(..., description="Then expected outcome")
 
 
-class EdgeCase(BaseModel):
-    """An edge case scenario."""
-    id: str = Field(..., description="Edge case identifier (e.g., EC-1)")
-    scenario: str = Field(..., description="Edge case scenario description")
-    expected_behavior: str = Field(..., description="Expected system behavior")
-
-
-class NegativeScenario(BaseModel):
-    """A negative test scenario."""
-    id: str = Field(..., description="Negative scenario identifier (e.g., NS-1)")
-    scenario: str = Field(..., description="Negative scenario description")
-    expected_behavior: str = Field(..., description="Expected error handling or behavior")
+class TestScenario(BaseModel):
+    """A test scenario for QA."""
+    title: str = Field(..., description="Test scenario title")
+    type: str = Field(..., description="Type: positive, negative, or boundary")
 
 
 class AcceptanceCriteriaRequest(BaseModel):
@@ -249,23 +241,26 @@ class AcceptanceCriteriaRequest(BaseModel):
 class AcceptanceCriteriaResponse(BaseModel):
     """Response body for /analyze/acceptance-criteria endpoint."""
     issue_key: Optional[str] = None
-    title: str
     acceptance_criteria: List[AcceptanceCriterion] = Field(
         ..., 
         description="List of acceptance criteria (max 5)",
         max_length=5
     )
-    edge_cases: List[EdgeCase] = Field(
+    edge_cases: List[str] = Field(
         ...,
-        description="List of edge cases (max 5)",
+        description="Edge cases: failure modes, permissions, empty states, invalid input, concurrency",
         max_length=5
     )
-    negative_scenarios: List[NegativeScenario] = Field(
+    test_scenarios: List[TestScenario] = Field(
         ...,
-        description="List of negative scenarios",
+        description="Practical QA test scenarios",
         max_length=5
     )
-    domain_context_applied: Optional[str] = None
+    automation_candidates: List[str] = Field(
+        ...,
+        description="Scenarios worth automating in CI/CD",
+        max_length=5
+    )
 
 
 def _get_demo_response(title: str, description: str, domain_context: Optional[str] = None) -> str:
@@ -959,22 +954,23 @@ def _generate_acceptance_criteria(
     domain_context: Optional[str] = None
 ) -> dict:
     """
-    Generate acceptance criteria, edge cases, and negative scenarios.
+    Generate acceptance criteria, edge cases, test scenarios, and automation candidates.
     
     Uses domain context to tailor suggestions.
     """
     from .context_loader import load_context
     
-    # Load domain context (not currently used in demo mode, but available for future LLM integration)
+    # Load domain context (available for future LLM integration)
     context = load_context(domain_context) if domain_context else None
     
     # Extract key concepts from requirement
     text = f"{title} {description}".lower()
     
-    # Default acceptance criteria based on requirement analysis
+    # Initialize outputs
     acceptance_criteria = []
     edge_cases = []
-    negative_scenarios = []
+    test_scenarios = []
+    automation_candidates = []
     
     # Domain-specific generation
     if domain_context == "control_panel":
@@ -999,38 +995,25 @@ def _generate_acceptance_criteria(
             }
         ]
         edge_cases = [
-            {
-                "id": "EC-1",
-                "scenario": "User session expires during operation",
-                "expected_behavior": "System saves draft state and prompts re-authentication"
-            },
-            {
-                "id": "EC-2",
-                "scenario": "Concurrent modification by another user",
-                "expected_behavior": "System detects conflict and shows resolution options"
-            },
-            {
-                "id": "EC-3",
-                "scenario": "Maximum allowed entries reached",
-                "expected_behavior": "System displays limit warning with upgrade options"
-            }
+            "Session expires during multi-step operation",
+            "Concurrent modification by another admin user",
+            "Maximum allowed entries reached for resource",
+            "User lacks partial permissions for nested operation",
+            "Empty state when no data exists yet"
         ]
-        negative_scenarios = [
-            {
-                "id": "NS-1",
-                "scenario": "User attempts action without required permissions",
-                "expected_behavior": "System displays access denied with required role info"
-            },
-            {
-                "id": "NS-2",
-                "scenario": "Invalid input data submitted",
-                "expected_behavior": "System shows specific validation errors for each field"
-            },
-            {
-                "id": "NS-3",
-                "scenario": "Backend service unavailable",
-                "expected_behavior": "System shows friendly error with retry option"
-            }
+        test_scenarios = [
+            {"title": "Verify operation completes with valid permissions", "type": "positive"},
+            {"title": "Verify access denied for insufficient permissions", "type": "negative"},
+            {"title": "Verify behavior at maximum resource limit", "type": "boundary"},
+            {"title": "Verify concurrent edit conflict detection", "type": "negative"},
+            {"title": "Verify audit log entry created on action", "type": "positive"}
+        ]
+        automation_candidates = [
+            "Permission verification for all role types",
+            "Input validation with boundary values",
+            "Audit log generation verification",
+            "Session timeout handling",
+            "API response schema validation"
         ]
     elif domain_context == "embedded_device":
         acceptance_criteria = [
@@ -1054,38 +1037,25 @@ def _generate_acceptance_criteria(
             }
         ]
         edge_cases = [
-            {
-                "id": "EC-1",
-                "scenario": "Power fluctuation during operation",
-                "expected_behavior": "System maintains state and recovers gracefully"
-            },
-            {
-                "id": "EC-2",
-                "scenario": "Memory approaching limit",
-                "expected_behavior": "System triggers garbage collection or alerts"
-            },
-            {
-                "id": "EC-3",
-                "scenario": "Sensor reading at boundary values",
-                "expected_behavior": "System handles min/max values correctly"
-            }
+            "Power fluctuation during write operation",
+            "Memory approaching allocation limit",
+            "Sensor reading at min/max boundary values",
+            "Communication timeout during data transfer",
+            "Invalid or corrupted incoming data packet"
         ]
-        negative_scenarios = [
-            {
-                "id": "NS-1",
-                "scenario": "Communication timeout occurs",
-                "expected_behavior": "System retries with exponential backoff"
-            },
-            {
-                "id": "NS-2",
-                "scenario": "Invalid sensor data received",
-                "expected_behavior": "System logs error and uses fallback value"
-            },
-            {
-                "id": "NS-3",
-                "scenario": "Firmware version mismatch",
-                "expected_behavior": "System enters safe mode with upgrade prompt"
-            }
+        test_scenarios = [
+            {"title": "Verify response time under normal conditions", "type": "positive"},
+            {"title": "Verify graceful degradation on low memory", "type": "boundary"},
+            {"title": "Verify recovery after communication timeout", "type": "negative"},
+            {"title": "Verify data integrity with checksum validation", "type": "positive"},
+            {"title": "Verify behavior at sensor boundary values", "type": "boundary"}
+        ]
+        automation_candidates = [
+            "Response latency measurement under load",
+            "Memory usage profiling during operations",
+            "Communication protocol compliance tests",
+            "Data integrity verification with checksums",
+            "Boundary value testing for sensor inputs"
         ]
     elif domain_context == "media_streaming":
         acceptance_criteria = [
@@ -1109,38 +1079,25 @@ def _generate_acceptance_criteria(
             }
         ]
         edge_cases = [
-            {
-                "id": "EC-1",
-                "scenario": "Network bandwidth drops significantly",
-                "expected_behavior": "System buffers and reduces quality smoothly"
-            },
-            {
-                "id": "EC-2",
-                "scenario": "User switches devices mid-stream",
-                "expected_behavior": "Playback resumes at same position on new device"
-            },
-            {
-                "id": "EC-3",
-                "scenario": "Content near end of licensing window",
-                "expected_behavior": "User notified and playback completes if started"
-            }
+            "Network bandwidth drops below minimum threshold",
+            "User switches devices mid-stream",
+            "Content license expires during playback",
+            "Maximum concurrent streams already active",
+            "Geographic restriction applies to content"
         ]
-        negative_scenarios = [
-            {
-                "id": "NS-1",
-                "scenario": "DRM license expired",
-                "expected_behavior": "System shows renewal options, blocks playback"
-            },
-            {
-                "id": "NS-2",
-                "scenario": "Geographic restriction applies",
-                "expected_behavior": "System displays region unavailable message"
-            },
-            {
-                "id": "NS-3",
-                "scenario": "Maximum concurrent streams reached",
-                "expected_behavior": "System shows active streams with stop option"
-            }
+        test_scenarios = [
+            {"title": "Verify playback starts within latency SLA", "type": "positive"},
+            {"title": "Verify adaptive bitrate on bandwidth change", "type": "boundary"},
+            {"title": "Verify DRM license validation blocks expired content", "type": "negative"},
+            {"title": "Verify concurrent stream limit enforcement", "type": "negative"},
+            {"title": "Verify seamless device handoff", "type": "positive"}
+        ]
+        automation_candidates = [
+            "Playback start time measurement",
+            "Adaptive bitrate switching verification",
+            "DRM license validation flow",
+            "Concurrent stream limit enforcement",
+            "Content availability by region"
         ]
     else:
         # Generic web application
@@ -1165,38 +1122,25 @@ def _generate_acceptance_criteria(
             }
         ]
         edge_cases = [
-            {
-                "id": "EC-1",
-                "scenario": "User submits empty or whitespace-only input",
-                "expected_behavior": "System shows validation message"
-            },
-            {
-                "id": "EC-2",
-                "scenario": "User double-clicks submit button",
-                "expected_behavior": "System prevents duplicate submission"
-            },
-            {
-                "id": "EC-3",
-                "scenario": "Page is refreshed during operation",
-                "expected_behavior": "System handles gracefully without data loss"
-            }
+            "User submits empty or whitespace-only input",
+            "Double-click on submit button",
+            "Page refresh during async operation",
+            "User not authenticated when accessing protected resource",
+            "Server returns 5xx error during operation"
         ]
-        negative_scenarios = [
-            {
-                "id": "NS-1",
-                "scenario": "User not authenticated",
-                "expected_behavior": "System redirects to login with return URL"
-            },
-            {
-                "id": "NS-2",
-                "scenario": "Server error occurs",
-                "expected_behavior": "System shows friendly error page"
-            },
-            {
-                "id": "NS-3",
-                "scenario": "Required field missing",
-                "expected_behavior": "System highlights field with error message"
-            }
+        test_scenarios = [
+            {"title": "Verify successful operation with valid input", "type": "positive"},
+            {"title": "Verify validation error on invalid input", "type": "negative"},
+            {"title": "Verify behavior at input length boundaries", "type": "boundary"},
+            {"title": "Verify authentication redirect for protected routes", "type": "negative"},
+            {"title": "Verify error handling on server failure", "type": "negative"}
+        ]
+        automation_candidates = [
+            "Form validation with valid and invalid inputs",
+            "Authentication flow verification",
+            "API response status code validation",
+            "Input boundary value testing",
+            "Error message display verification"
         ]
     
     # Add context-specific items based on keywords
@@ -1207,43 +1151,34 @@ def _generate_acceptance_criteria(
             "when": "User submits login form",
             "then": "User is authenticated and redirected to dashboard"
         })
-        negative_scenarios.append({
-            "id": f"NS-{len(negative_scenarios) + 1}",
-            "scenario": "User enters incorrect password 3 times",
-            "expected_behavior": "Account is temporarily locked with unlock instructions"
-        })
+        edge_cases.append("User enters incorrect password multiple times")
+        test_scenarios.append({"title": "Verify account lockout after failed attempts", "type": "negative"})
+        automation_candidates.append("Login flow with valid/invalid credentials")
     
     if "search" in text or "filter" in text:
-        edge_cases.append({
-            "id": f"EC-{len(edge_cases) + 1}",
-            "scenario": "Search returns no results",
-            "expected_behavior": "System shows helpful empty state with suggestions"
-        })
+        edge_cases.append("Search query returns zero results")
+        test_scenarios.append({"title": "Verify empty state display for no results", "type": "boundary"})
+        automation_candidates.append("Search result pagination and filtering")
     
     if "upload" in text or "file" in text or "import" in text:
-        edge_cases.append({
-            "id": f"EC-{len(edge_cases) + 1}",
-            "scenario": "File exceeds maximum size limit",
-            "expected_behavior": "System shows size limit error before upload starts"
-        })
-        negative_scenarios.append({
-            "id": f"NS-{len(negative_scenarios) + 1}",
-            "scenario": "Unsupported file format uploaded",
-            "expected_behavior": "System rejects with list of supported formats"
-        })
+        edge_cases.append("File exceeds maximum allowed size")
+        edge_cases.append("Unsupported file format submitted")
+        test_scenarios.append({"title": "Verify file size limit enforcement", "type": "boundary"})
+        automation_candidates.append("File upload with various formats and sizes")
     
     # Limit to max 5 each
     return {
         "acceptance_criteria": acceptance_criteria[:5],
         "edge_cases": edge_cases[:5],
-        "negative_scenarios": negative_scenarios[:5]
+        "test_scenarios": test_scenarios[:5],
+        "automation_candidates": automation_candidates[:5]
     }
 
 
 @app.post("/analyze/acceptance-criteria", response_model=AcceptanceCriteriaResponse, tags=["Analysis"])
 async def generate_acceptance_criteria(request: AcceptanceCriteriaRequest):
     """
-    Generate acceptance criteria, edge cases, and negative scenarios for a requirement.
+    Generate acceptance criteria, edge cases, test scenarios, and automation candidates.
     
     Uses domain context to provide relevant suggestions:
     - **control_panel**: Permission checks, audit logging, concurrent access
@@ -1253,8 +1188,9 @@ async def generate_acceptance_criteria(request: AcceptanceCriteriaRequest):
     
     Returns structured JSON with:
     - Up to 5 acceptance criteria (Given/When/Then format)
-    - Up to 5 edge cases
-    - Up to 5 negative scenarios
+    - Up to 5 edge cases (failure modes, permissions, empty states, invalid input, concurrency)
+    - Up to 5 test scenarios (positive, negative, boundary)
+    - Up to 5 automation candidates (CI/CD worthy scenarios)
     """
     result = _generate_acceptance_criteria(
         title=request.title,
@@ -1264,15 +1200,12 @@ async def generate_acceptance_criteria(request: AcceptanceCriteriaRequest):
     
     return AcceptanceCriteriaResponse(
         issue_key=request.issue_key,
-        title=request.title,
         acceptance_criteria=[
             AcceptanceCriterion(**ac) for ac in result["acceptance_criteria"]
         ],
-        edge_cases=[
-            EdgeCase(**ec) for ec in result["edge_cases"]
+        edge_cases=result["edge_cases"],
+        test_scenarios=[
+            TestScenario(**ts) for ts in result["test_scenarios"]
         ],
-        negative_scenarios=[
-            NegativeScenario(**ns) for ns in result["negative_scenarios"]
-        ],
-        domain_context_applied=request.domain_context or "generic_web"
+        automation_candidates=result["automation_candidates"]
     )
