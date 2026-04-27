@@ -56,40 +56,40 @@ class TestJiraFormatter:
     """Tests for jira_formatter module."""
 
     def test_format_jira_comment_basic(self, sample_report):
-        """Test basic Jira comment formatting."""
+        """Test basic Jira comment formatting uses plain text."""
         result = format_jira_comment(sample_report)
         
-        assert "h3. AI Requirement Readiness Analysis" in result
-        # Score is calculated from breakdown (43), not the model-provided value
-        assert f"Readiness Score:* {sample_report.readiness_score}/100" in result
-        assert "Recommendation:" in result
+        assert "AI Requirement Readiness Analysis" in result
+        assert f"Readiness Score: {sample_report.readiness_score}/100" in result
+        assert "Recommendation: NOT READY" in result
 
     def test_format_jira_comment_with_issue_key(self, sample_report):
         """Test Jira comment includes issue key in title."""
         result = format_jira_comment(sample_report, issue_key="QA-123")
         
         assert "QA-123" in result
-        assert "h3. AI Requirement Readiness Analysis - QA-123" in result
+        assert "AI Requirement Readiness Analysis — QA-123" in result
 
     def test_format_jira_comment_contains_main_concerns(self, sample_report):
         """Test Jira comment includes main concerns section."""
         result = format_jira_comment(sample_report)
         
-        assert "h4. Main Concerns" in result
-        assert "Scope creep" in result
+        assert "Main Concerns:" in result
+        assert "• Scope creep" in result
 
     def test_format_jira_comment_contains_clarification_questions(self, sample_report):
-        """Test Jira comment includes clarification questions."""
+        """Test Jira comment includes numbered clarification questions."""
         result = format_jira_comment(sample_report)
         
-        assert "h4. Clarification Questions" in result
-        assert "What is the scope?" in result
+        assert "Clarification Questions:" in result
+        assert "1. What is the scope?" in result
+        assert "2. Who is the user?" in result
 
     def test_format_jira_comment_contains_qa_next_step(self, sample_report):
         """Test Jira comment includes QA next step."""
         result = format_jira_comment(sample_report)
         
-        assert "h4. QA Next Step" in result
+        assert "QA Next Step:" in result
 
     def test_format_jira_comment_contains_human_review_note(self, sample_report):
         """Test Jira comment includes human review note."""
@@ -97,11 +97,16 @@ class TestJiraFormatter:
         
         assert "Needs product owner review" in result
 
-    def test_format_jira_comment_color_coding(self, sample_report):
-        """Test recommendation has color coding."""
+    def test_format_jira_comment_no_wiki_markup(self, sample_report):
+        """Test Jira comment does not contain legacy wiki markup."""
         result = format_jira_comment(sample_report)
         
-        assert "{color:red}" in result
+        # Should not contain any Jira wiki markup
+        assert "h3" not in result
+        assert "h4" not in result
+        assert "{color:" not in result
+        assert "----" not in result
+        assert "*Readiness" not in result
 
     def test_format_jira_comment_ready_status(self):
         """Test QA next step for ready status."""
@@ -134,6 +139,16 @@ class TestJiraFormatter:
         result = format_jira_comment(report)
         
         assert "Ready for test planning" in result
+        assert "Recommendation: READY" in result
+
+    def test_format_jira_comment_recommendation_formatting(self):
+        """Test recommendation enum values are formatted correctly."""
+        from src.jira_formatter import _format_recommendation
+        
+        assert _format_recommendation("ready") == "READY"
+        assert _format_recommendation("needs_refinement") == "NEEDS REFINEMENT"
+        assert _format_recommendation("high_risk") == "HIGH RISK"
+        assert _format_recommendation("not_ready") == "NOT READY"
 
 
 class TestConfluenceFormatter:

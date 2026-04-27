@@ -25,6 +25,65 @@ app = FastAPI(
 )
 
 
+def _assess_input_quality(title: str, description: str) -> dict:
+    """
+    Assess the quality of requirement input and return quality metrics.
+    
+    Returns dict with:
+        - quality_level: 'insufficient', 'poor', 'minimal', 'adequate'
+        - issues: list of specific problems found
+        - max_score: maximum achievable readiness score given input quality
+    """
+    issues = []
+    
+    title_clean = title.strip() if title else ""
+    desc_clean = description.strip() if description else ""
+    
+    title_words = len(title_clean.split()) if title_clean else 0
+    desc_words = len(desc_clean.split()) if desc_clean else 0
+    
+    # Check for empty/missing description
+    if not desc_clean:
+        issues.append("No description provided")
+    elif desc_words < 5:
+        issues.append("Description is too short (less than 5 words)")
+    
+    # Check for minimal title
+    if not title_clean:
+        issues.append("No title provided")
+    elif title_words == 1:
+        issues.append("Title is only one word")
+    elif title_words < 3:
+        issues.append("Title is too brief (less than 3 words)")
+    
+    # Check for placeholder/generic content
+    generic_titles = {"test", "testing", "todo", "tbd", "placeholder", "temp", "fix", "update", "change"}
+    if title_clean.lower() in generic_titles:
+        issues.append("Title appears to be a placeholder")
+    
+    # Determine quality level and max achievable score
+    if not desc_clean or not title_clean:
+        quality_level = "insufficient"
+        max_score = 5
+    elif desc_words < 5 or title_words == 1:
+        quality_level = "poor"
+        max_score = 15
+    elif desc_words < 15 or title_words < 3:
+        quality_level = "minimal"
+        max_score = 30
+    else:
+        quality_level = "adequate"
+        max_score = 100
+    
+    return {
+        "quality_level": quality_level,
+        "issues": issues,
+        "max_score": max_score,
+        "title_words": title_words,
+        "desc_words": desc_words,
+    }
+
+
 class AnalyzeRequest(BaseModel):
     """Request body for /analyze endpoint. Accepts Jira-like payload."""
     issue_key: Optional[str] = Field(
@@ -84,85 +143,246 @@ class ConfluencePageResponse(BaseModel):
     page_body: str
 
 
-def _get_demo_response(requirement_text: str) -> str:
-    """Generate a realistic demo response without calling the LLM."""
-    demo_data = {
-        "original_requirement": requirement_text,
-        "summary": "This requirement lacks specifics about scope, configuration options, user roles, and success criteria. Key details need clarification before development.",
-        "rewritten_user_story": "As a user, I want to perform the described action, so that the expected outcome can be achieved and validated against defined goals.",
-        "readiness_score": 34,
-        "recommendation": "not_ready",
-        "score_breakdown": {
-            "clarity": 40,
-            "acceptance_criteria_quality": 30,
-            "testability": 35,
-            "edge_case_coverage": 25,
-            "dependency_clarity": 45,
-            "risk_visibility": 35,
-            "observability_expectations": 25
-        },
-        "missing_information": [
-            "What is the specific scope and boundary of this feature?",
-            "Who are the target users and what are their roles?",
-            "What are the success criteria and acceptance conditions?",
-            "Are there dependencies on other systems or features?",
-            "What are the performance expectations?",
-            "What error handling is expected?"
-        ],
-        "acceptance_criteria": [
-            "[ASSUMPTION] Feature can be enabled/disabled by authorized users",
-            "[ASSUMPTION] Configuration changes take effect within reasonable time",
-            "[ASSUMPTION] Invalid inputs are rejected with clear error messages",
-            "[NEEDS CLARIFICATION] Define specific success conditions"
-        ],
-        "edge_cases": [
-            "Invalid input format or out-of-range values",
-            "Concurrent access by multiple users",
-            "System under high load during operation",
-            "Network interruption during processing",
-            "Rollback scenarios when operation fails"
-        ],
-        "product_risks": [
-            "Scope creep due to vague requirements",
-            "No defined user persona - unclear ownership",
-            "Missing success metrics to validate feature value"
-        ],
-        "qa_risks": [
-            "Cannot write deterministic tests without specific acceptance criteria",
-            "Performance testing requires baseline metrics not provided",
-            "Edge case coverage unclear"
-        ],
-        "technical_risks": [
-            "Potential integration issues with existing systems",
-            "Unknown dependencies may cause delays",
-            "Observability requirements not defined"
-        ],
-        "suggested_test_scenarios": [
-            {"title": "Basic functionality test", "type": "functional", "priority": "high", "description": "Verify core feature works as expected with valid inputs"},
-            {"title": "Input validation test", "type": "functional", "priority": "high", "description": "Verify invalid inputs are rejected with clear errors"},
-            {"title": "Concurrent access test", "type": "functional", "priority": "medium", "description": "Verify behavior with multiple simultaneous users"},
-            {"title": "Performance baseline test", "type": "non_functional", "priority": "high", "description": "Measure response time and throughput under load"},
-            {"title": "Error recovery test", "type": "negative", "priority": "medium", "description": "Verify graceful handling of failure scenarios"}
-        ],
-        "automation_candidates": [
-            "API tests for core endpoints",
-            "Regression test suite",
-            "Performance monitoring"
-        ],
-        "clarification_questions": [
-            "What is the exact scope of this feature?",
-            "Who are the primary users?",
-            "What are the specific acceptance criteria?",
-            "What dependencies exist?",
-            "What are the performance requirements?",
-            "What monitoring/alerting is expected?"
-        ],
-        "human_review_notes": [
-            "This requirement needs significant clarification before development",
-            "Recommend a refinement session to define scope and acceptance criteria",
-            "Consider breaking into smaller, well-defined user stories"
-        ]
-    }
+def _get_demo_response(title: str, description: str) -> str:
+    """
+    Generate a demo response based on input quality assessment.
+    
+    Returns stricter scores for insufficient/poor quality input.
+    """
+    requirement_text = f"{title}\n\n{description}"
+    quality = _assess_input_quality(title, description)
+    
+    if quality["quality_level"] == "insufficient":
+        # No description or no title - this is not a valid requirement
+        demo_data = {
+            "original_requirement": requirement_text,
+            "summary": "This item cannot be analyzed as a requirement. Essential information is missing.",
+            "rewritten_user_story": "Cannot generate - insufficient information provided.",
+            "readiness_score": 5,
+            "recommendation": "not_ready",
+            "score_breakdown": {
+                "clarity": 5,
+                "acceptance_criteria_quality": 0,
+                "testability": 0,
+                "edge_case_coverage": 0,
+                "dependency_clarity": 0,
+                "risk_visibility": 0,
+                "observability_expectations": 0
+            },
+            "missing_information": quality["issues"] + [
+                "A requirement must have both a meaningful title and description",
+                "Cannot assess readiness without basic requirement content"
+            ],
+            "acceptance_criteria": [],
+            "edge_cases": [],
+            "product_risks": [
+                "This is not a valid requirement - cannot estimate effort or risk",
+                "Development cannot proceed without requirement definition"
+            ],
+            "qa_risks": [
+                "Cannot create any test cases without requirement content",
+                "No basis for test planning"
+            ],
+            "technical_risks": [
+                "Cannot assess technical feasibility without requirements"
+            ],
+            "suggested_test_scenarios": [],
+            "automation_candidates": [],
+            "clarification_questions": [
+                "What is this requirement about?",
+                "What should the system do?",
+                "Who is the user and what is their goal?"
+            ],
+            "human_review_notes": [
+                "BLOCKED: This item has no description and cannot be analyzed",
+                "Action required: Add a detailed description before analysis"
+            ]
+        }
+    elif quality["quality_level"] == "poor":
+        # One-word title or very short description
+        demo_data = {
+            "original_requirement": requirement_text,
+            "summary": "This requirement is too vague to analyze meaningfully. Only a brief title or minimal description was provided.",
+            "rewritten_user_story": "Cannot generate a proper user story from minimal input.",
+            "readiness_score": 10,
+            "recommendation": "not_ready",
+            "score_breakdown": {
+                "clarity": 15,
+                "acceptance_criteria_quality": 5,
+                "testability": 5,
+                "edge_case_coverage": 0,
+                "dependency_clarity": 10,
+                "risk_visibility": 5,
+                "observability_expectations": 0
+            },
+            "missing_information": quality["issues"] + [
+                "Detailed description of what the feature should do",
+                "User context and goals",
+                "Acceptance criteria",
+                "Success metrics"
+            ],
+            "acceptance_criteria": [
+                "[CANNOT DETERMINE] No acceptance criteria can be inferred from this input"
+            ],
+            "edge_cases": [],
+            "product_risks": [
+                "Requirement is too vague to estimate scope or effort",
+                "High risk of misalignment between expectation and delivery",
+                "Cannot validate feature value without defined goals"
+            ],
+            "qa_risks": [
+                "Cannot write meaningful test cases",
+                "No clear pass/fail criteria",
+                "Testing scope undefined"
+            ],
+            "technical_risks": [
+                "Cannot assess implementation complexity",
+                "Unknown dependencies and constraints"
+            ],
+            "suggested_test_scenarios": [],
+            "automation_candidates": [],
+            "clarification_questions": [
+                "What specific functionality is being requested?",
+                "What problem does this solve for the user?",
+                "What are the expected inputs and outputs?",
+                "What are the acceptance criteria?"
+            ],
+            "human_review_notes": [
+                "BLOCKED: Requirement lacks sufficient detail for analysis",
+                "The title and description are too brief to assess readiness",
+                "Action required: Expand the description with specific details"
+            ]
+        }
+    elif quality["quality_level"] == "minimal":
+        # Short but present content
+        demo_data = {
+            "original_requirement": requirement_text,
+            "summary": "This requirement provides limited information. Key details about scope, users, and success criteria are missing.",
+            "rewritten_user_story": "As a user, I want [unclear feature] so that [unknown benefit].",
+            "readiness_score": 25,
+            "recommendation": "not_ready",
+            "score_breakdown": {
+                "clarity": 30,
+                "acceptance_criteria_quality": 15,
+                "testability": 20,
+                "edge_case_coverage": 10,
+                "dependency_clarity": 25,
+                "risk_visibility": 20,
+                "observability_expectations": 15
+            },
+            "missing_information": quality["issues"] + [
+                "Detailed feature description",
+                "User personas and roles",
+                "Specific acceptance criteria",
+                "Performance expectations",
+                "Error handling requirements"
+            ],
+            "acceptance_criteria": [
+                "[NEEDS DEFINITION] Acceptance criteria cannot be determined from this input"
+            ],
+            "edge_cases": [
+                "Edge cases cannot be identified without more detail"
+            ],
+            "product_risks": [
+                "Scope is unclear - high risk of scope creep",
+                "User needs not well defined",
+                "Success criteria missing"
+            ],
+            "qa_risks": [
+                "Limited basis for test case design",
+                "Cannot define test coverage",
+                "Pass/fail criteria unclear"
+            ],
+            "technical_risks": [
+                "Implementation approach uncertain",
+                "Dependencies unknown"
+            ],
+            "suggested_test_scenarios": [
+                {"title": "Basic functionality", "type": "functional", "priority": "high", "description": "Verify basic feature works - details TBD"}
+            ],
+            "automation_candidates": [],
+            "clarification_questions": [
+                "Can you provide more detail about what this feature should do?",
+                "Who are the users and what are their goals?",
+                "What are the specific acceptance criteria?",
+                "What happens in error scenarios?"
+            ],
+            "human_review_notes": [
+                "Requirement needs more detail before development can begin",
+                "Consider a refinement session to flesh out requirements"
+            ]
+        }
+    else:
+        # Adequate input - standard demo response
+        demo_data = {
+            "original_requirement": requirement_text,
+            "summary": "This requirement provides a foundation but lacks specifics about scope, acceptance criteria, and edge cases. Clarification needed before development.",
+            "rewritten_user_story": "As a user, I want to perform the described action, so that the expected outcome can be achieved and validated against defined goals.",
+            "readiness_score": 34,
+            "recommendation": "not_ready",
+            "score_breakdown": {
+                "clarity": 40,
+                "acceptance_criteria_quality": 30,
+                "testability": 35,
+                "edge_case_coverage": 25,
+                "dependency_clarity": 45,
+                "risk_visibility": 35,
+                "observability_expectations": 25
+            },
+            "missing_information": [
+                "Specific scope and boundary of this feature",
+                "Target users and their roles",
+                "Success criteria and acceptance conditions",
+                "Dependencies on other systems or features",
+                "Performance expectations",
+                "Error handling requirements"
+            ],
+            "acceptance_criteria": [
+                "[ASSUMPTION] Feature can be enabled/disabled by authorized users",
+                "[ASSUMPTION] Invalid inputs are rejected with clear error messages",
+                "[NEEDS CLARIFICATION] Define specific success conditions"
+            ],
+            "edge_cases": [
+                "Invalid input format or out-of-range values",
+                "Concurrent access by multiple users",
+                "System under high load",
+                "Network interruption during processing"
+            ],
+            "product_risks": [
+                "Scope creep due to vague requirements",
+                "No defined user persona",
+                "Missing success metrics"
+            ],
+            "qa_risks": [
+                "Cannot write deterministic tests without specific acceptance criteria",
+                "Performance testing requires baseline metrics"
+            ],
+            "technical_risks": [
+                "Potential integration issues",
+                "Unknown dependencies may cause delays"
+            ],
+            "suggested_test_scenarios": [
+                {"title": "Basic functionality test", "type": "functional", "priority": "high", "description": "Verify core feature works with valid inputs"},
+                {"title": "Input validation test", "type": "functional", "priority": "high", "description": "Verify invalid inputs are rejected"},
+                {"title": "Error recovery test", "type": "negative", "priority": "medium", "description": "Verify graceful handling of failures"}
+            ],
+            "automation_candidates": [
+                "API tests for core endpoints",
+                "Regression test suite"
+            ],
+            "clarification_questions": [
+                "What is the exact scope of this feature?",
+                "Who are the primary users?",
+                "What are the specific acceptance criteria?",
+                "What dependencies exist?",
+                "What are the performance requirements?"
+            ],
+            "human_review_notes": [
+                "This requirement needs clarification before development",
+                "Recommend a refinement session to define scope and acceptance criteria"
+            ]
+        }
+    
     return json.dumps(demo_data, indent=2)
 
 
@@ -171,7 +391,7 @@ def _analyze_requirement(request: AnalyzeRequest, demo_mode: bool, provider: str
     requirement_text = f"{request.title}\n\n{request.description}"
     
     if demo_mode:
-        raw_json = _get_demo_response(requirement_text)
+        raw_json = _get_demo_response(request.title, request.description)
     else:
         try:
             prompt = PromptBuilder().build_prompt(requirement_text)
