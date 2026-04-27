@@ -204,6 +204,70 @@ class DuplicateCheckResponse(BaseModel):
     recommendation: str
 
 
+class AcceptanceCriterion(BaseModel):
+    """A single acceptance criterion."""
+    id: str = Field(..., description="AC identifier (e.g., AC-1)")
+    given: str = Field(..., description="Given precondition")
+    when: str = Field(..., description="When action")
+    then: str = Field(..., description="Then expected outcome")
+
+
+class EdgeCase(BaseModel):
+    """An edge case scenario."""
+    id: str = Field(..., description="Edge case identifier (e.g., EC-1)")
+    scenario: str = Field(..., description="Edge case scenario description")
+    expected_behavior: str = Field(..., description="Expected system behavior")
+
+
+class NegativeScenario(BaseModel):
+    """A negative test scenario."""
+    id: str = Field(..., description="Negative scenario identifier (e.g., NS-1)")
+    scenario: str = Field(..., description="Negative scenario description")
+    expected_behavior: str = Field(..., description="Expected error handling or behavior")
+
+
+class AcceptanceCriteriaRequest(BaseModel):
+    """Request body for /analyze/acceptance-criteria endpoint."""
+    issue_key: Optional[str] = Field(default=None, description="Jira issue key")
+    title: str = Field(..., description="Requirement title")
+    description: Union[str, dict, None] = Field(
+        default="",
+        description="Requirement description (plain text or ADF)"
+    )
+    domain_context: Optional[str] = Field(
+        default=None,
+        description="Domain context (e.g., control_panel, embedded_device)"
+    )
+
+    @field_validator('description', mode='before')
+    @classmethod
+    def convert_adf_to_text(cls, v: Any) -> str:
+        """Convert ADF description to plain text."""
+        return extract_text_from_adf(v)
+
+
+class AcceptanceCriteriaResponse(BaseModel):
+    """Response body for /analyze/acceptance-criteria endpoint."""
+    issue_key: Optional[str] = None
+    title: str
+    acceptance_criteria: List[AcceptanceCriterion] = Field(
+        ..., 
+        description="List of acceptance criteria (max 5)",
+        max_length=5
+    )
+    edge_cases: List[EdgeCase] = Field(
+        ...,
+        description="List of edge cases (max 5)",
+        max_length=5
+    )
+    negative_scenarios: List[NegativeScenario] = Field(
+        ...,
+        description="List of negative scenarios",
+        max_length=5
+    )
+    domain_context_applied: Optional[str] = None
+
+
 def _get_demo_response(title: str, description: str, domain_context: Optional[str] = None) -> str:
     """
     Generate a demo response based on input quality assessment and domain context.
@@ -886,4 +950,329 @@ async def check_duplicates(request: DuplicateCheckRequest):
             DuplicateMatch(**match) for match in result["top_matches"]
         ],
         recommendation=result["recommendation"]
+    )
+
+
+def _generate_acceptance_criteria(
+    title: str,
+    description: str,
+    domain_context: Optional[str] = None
+) -> dict:
+    """
+    Generate acceptance criteria, edge cases, and negative scenarios.
+    
+    Uses domain context to tailor suggestions.
+    """
+    from .context_loader import load_context
+    
+    # Load domain context (not currently used in demo mode, but available for future LLM integration)
+    context = load_context(domain_context) if domain_context else None
+    
+    # Extract key concepts from requirement
+    text = f"{title} {description}".lower()
+    
+    # Default acceptance criteria based on requirement analysis
+    acceptance_criteria = []
+    edge_cases = []
+    negative_scenarios = []
+    
+    # Domain-specific generation
+    if domain_context == "control_panel":
+        acceptance_criteria = [
+            {
+                "id": "AC-1",
+                "given": "The user is authenticated and has appropriate permissions",
+                "when": "The user performs the main action described",
+                "then": "The system completes the operation and provides confirmation"
+            },
+            {
+                "id": "AC-2",
+                "given": "The system is in a valid state",
+                "when": "The user submits the required data",
+                "then": "The data is validated and persisted correctly"
+            },
+            {
+                "id": "AC-3",
+                "given": "The operation requires confirmation",
+                "when": "The user confirms the action",
+                "then": "The system executes the operation with proper audit logging"
+            }
+        ]
+        edge_cases = [
+            {
+                "id": "EC-1",
+                "scenario": "User session expires during operation",
+                "expected_behavior": "System saves draft state and prompts re-authentication"
+            },
+            {
+                "id": "EC-2",
+                "scenario": "Concurrent modification by another user",
+                "expected_behavior": "System detects conflict and shows resolution options"
+            },
+            {
+                "id": "EC-3",
+                "scenario": "Maximum allowed entries reached",
+                "expected_behavior": "System displays limit warning with upgrade options"
+            }
+        ]
+        negative_scenarios = [
+            {
+                "id": "NS-1",
+                "scenario": "User attempts action without required permissions",
+                "expected_behavior": "System displays access denied with required role info"
+            },
+            {
+                "id": "NS-2",
+                "scenario": "Invalid input data submitted",
+                "expected_behavior": "System shows specific validation errors for each field"
+            },
+            {
+                "id": "NS-3",
+                "scenario": "Backend service unavailable",
+                "expected_behavior": "System shows friendly error with retry option"
+            }
+        ]
+    elif domain_context == "embedded_device":
+        acceptance_criteria = [
+            {
+                "id": "AC-1",
+                "given": "The device is powered on and initialized",
+                "when": "The trigger condition is met",
+                "then": "The system responds within specified latency requirements"
+            },
+            {
+                "id": "AC-2",
+                "given": "The device has stable power supply",
+                "when": "The operation is executed",
+                "then": "Memory and CPU usage remain within defined limits"
+            },
+            {
+                "id": "AC-3",
+                "given": "Communication channel is established",
+                "when": "Data is transmitted",
+                "then": "Data integrity is verified with checksum validation"
+            }
+        ]
+        edge_cases = [
+            {
+                "id": "EC-1",
+                "scenario": "Power fluctuation during operation",
+                "expected_behavior": "System maintains state and recovers gracefully"
+            },
+            {
+                "id": "EC-2",
+                "scenario": "Memory approaching limit",
+                "expected_behavior": "System triggers garbage collection or alerts"
+            },
+            {
+                "id": "EC-3",
+                "scenario": "Sensor reading at boundary values",
+                "expected_behavior": "System handles min/max values correctly"
+            }
+        ]
+        negative_scenarios = [
+            {
+                "id": "NS-1",
+                "scenario": "Communication timeout occurs",
+                "expected_behavior": "System retries with exponential backoff"
+            },
+            {
+                "id": "NS-2",
+                "scenario": "Invalid sensor data received",
+                "expected_behavior": "System logs error and uses fallback value"
+            },
+            {
+                "id": "NS-3",
+                "scenario": "Firmware version mismatch",
+                "expected_behavior": "System enters safe mode with upgrade prompt"
+            }
+        ]
+    elif domain_context == "media_streaming":
+        acceptance_criteria = [
+            {
+                "id": "AC-1",
+                "given": "User has valid subscription and network connection",
+                "when": "User initiates playback",
+                "then": "Content starts within 2 seconds with adaptive quality"
+            },
+            {
+                "id": "AC-2",
+                "given": "Content is DRM protected",
+                "when": "Playback is requested",
+                "then": "License is validated before content delivery"
+            },
+            {
+                "id": "AC-3",
+                "given": "User is watching content",
+                "when": "Network quality degrades",
+                "then": "System adapts bitrate without interruption"
+            }
+        ]
+        edge_cases = [
+            {
+                "id": "EC-1",
+                "scenario": "Network bandwidth drops significantly",
+                "expected_behavior": "System buffers and reduces quality smoothly"
+            },
+            {
+                "id": "EC-2",
+                "scenario": "User switches devices mid-stream",
+                "expected_behavior": "Playback resumes at same position on new device"
+            },
+            {
+                "id": "EC-3",
+                "scenario": "Content near end of licensing window",
+                "expected_behavior": "User notified and playback completes if started"
+            }
+        ]
+        negative_scenarios = [
+            {
+                "id": "NS-1",
+                "scenario": "DRM license expired",
+                "expected_behavior": "System shows renewal options, blocks playback"
+            },
+            {
+                "id": "NS-2",
+                "scenario": "Geographic restriction applies",
+                "expected_behavior": "System displays region unavailable message"
+            },
+            {
+                "id": "NS-3",
+                "scenario": "Maximum concurrent streams reached",
+                "expected_behavior": "System shows active streams with stop option"
+            }
+        ]
+    else:
+        # Generic web application
+        acceptance_criteria = [
+            {
+                "id": "AC-1",
+                "given": "The user is on the relevant page",
+                "when": "The user performs the described action",
+                "then": "The system responds with expected outcome"
+            },
+            {
+                "id": "AC-2",
+                "given": "Required preconditions are met",
+                "when": "The user submits the form/request",
+                "then": "Data is validated and processed correctly"
+            },
+            {
+                "id": "AC-3",
+                "given": "The operation completes successfully",
+                "when": "The result is displayed",
+                "then": "User receives appropriate confirmation feedback"
+            }
+        ]
+        edge_cases = [
+            {
+                "id": "EC-1",
+                "scenario": "User submits empty or whitespace-only input",
+                "expected_behavior": "System shows validation message"
+            },
+            {
+                "id": "EC-2",
+                "scenario": "User double-clicks submit button",
+                "expected_behavior": "System prevents duplicate submission"
+            },
+            {
+                "id": "EC-3",
+                "scenario": "Page is refreshed during operation",
+                "expected_behavior": "System handles gracefully without data loss"
+            }
+        ]
+        negative_scenarios = [
+            {
+                "id": "NS-1",
+                "scenario": "User not authenticated",
+                "expected_behavior": "System redirects to login with return URL"
+            },
+            {
+                "id": "NS-2",
+                "scenario": "Server error occurs",
+                "expected_behavior": "System shows friendly error page"
+            },
+            {
+                "id": "NS-3",
+                "scenario": "Required field missing",
+                "expected_behavior": "System highlights field with error message"
+            }
+        ]
+    
+    # Add context-specific items based on keywords
+    if "login" in text or "authentication" in text or "password" in text:
+        acceptance_criteria.append({
+            "id": f"AC-{len(acceptance_criteria) + 1}",
+            "given": "User enters valid credentials",
+            "when": "User submits login form",
+            "then": "User is authenticated and redirected to dashboard"
+        })
+        negative_scenarios.append({
+            "id": f"NS-{len(negative_scenarios) + 1}",
+            "scenario": "User enters incorrect password 3 times",
+            "expected_behavior": "Account is temporarily locked with unlock instructions"
+        })
+    
+    if "search" in text or "filter" in text:
+        edge_cases.append({
+            "id": f"EC-{len(edge_cases) + 1}",
+            "scenario": "Search returns no results",
+            "expected_behavior": "System shows helpful empty state with suggestions"
+        })
+    
+    if "upload" in text or "file" in text or "import" in text:
+        edge_cases.append({
+            "id": f"EC-{len(edge_cases) + 1}",
+            "scenario": "File exceeds maximum size limit",
+            "expected_behavior": "System shows size limit error before upload starts"
+        })
+        negative_scenarios.append({
+            "id": f"NS-{len(negative_scenarios) + 1}",
+            "scenario": "Unsupported file format uploaded",
+            "expected_behavior": "System rejects with list of supported formats"
+        })
+    
+    # Limit to max 5 each
+    return {
+        "acceptance_criteria": acceptance_criteria[:5],
+        "edge_cases": edge_cases[:5],
+        "negative_scenarios": negative_scenarios[:5]
+    }
+
+
+@app.post("/analyze/acceptance-criteria", response_model=AcceptanceCriteriaResponse, tags=["Analysis"])
+async def generate_acceptance_criteria(request: AcceptanceCriteriaRequest):
+    """
+    Generate acceptance criteria, edge cases, and negative scenarios for a requirement.
+    
+    Uses domain context to provide relevant suggestions:
+    - **control_panel**: Permission checks, audit logging, concurrent access
+    - **embedded_device**: Resource constraints, power management, communication
+    - **media_streaming**: DRM, buffering, adaptive bitrate
+    - **generic_web** (default): Standard web app patterns
+    
+    Returns structured JSON with:
+    - Up to 5 acceptance criteria (Given/When/Then format)
+    - Up to 5 edge cases
+    - Up to 5 negative scenarios
+    """
+    result = _generate_acceptance_criteria(
+        title=request.title,
+        description=request.description,
+        domain_context=request.domain_context
+    )
+    
+    return AcceptanceCriteriaResponse(
+        issue_key=request.issue_key,
+        title=request.title,
+        acceptance_criteria=[
+            AcceptanceCriterion(**ac) for ac in result["acceptance_criteria"]
+        ],
+        edge_cases=[
+            EdgeCase(**ec) for ec in result["edge_cases"]
+        ],
+        negative_scenarios=[
+            NegativeScenario(**ns) for ns in result["negative_scenarios"]
+        ],
+        domain_context_applied=request.domain_context or "generic_web"
     )
