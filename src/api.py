@@ -135,6 +135,10 @@ class AnalyzeResponse(BaseModel):
     issue_key: Optional[str] = None
     readiness_score: int
     recommendation: str
+    risk_level: str = Field(..., description="Risk level: Low, Medium, High, Critical")
+    qa_complexity: str = Field(..., description="QA complexity: Low, Medium, High")
+    clarification_count: int = Field(..., description="Number of clarification questions")
+    automation_candidate: bool = Field(..., description="True if requirement is suitable for automation")
     report: RequirementReadinessReport
 
 
@@ -148,6 +152,23 @@ class JiraCommentResponse(BaseModel):
     """Response body for /analyze/jira-comment endpoint."""
     issue_key: Optional[str] = None
     jira_comment: str
+
+
+class JiraCommentFormatRequest(BaseModel):
+    """Request body for /format/jira-comment endpoint. Accepts combined analysis + AC data."""
+    issue_key: Optional[str] = Field(default=None, description="Jira issue key")
+    readiness_score: int = Field(..., ge=0, le=100, description="Readiness score 0-100")
+    recommendation: str = Field(..., description="Recommendation: ready, needs_review, needs_refinement, not_ready")
+    summary: Optional[str] = Field(default=None, description="Requirement summary")
+    main_concerns: Optional[List[str]] = Field(default=None, description="Main concerns/risks")
+    clarification_questions: Optional[List[str]] = Field(default=None, description="Clarification questions")
+    acceptance_criteria: Optional[List[dict]] = Field(
+        default=None,
+        description="Acceptance criteria with id, given, when, then fields"
+    )
+    edge_cases: Optional[List[str]] = Field(default=None, description="Edge cases")
+    test_scenarios: Optional[List[dict]] = Field(default=None, description="Test scenarios")
+    automation_candidates: Optional[List[str]] = Field(default=None, description="Automation candidates")
 
 
 class ConfluencePageResponse(BaseModel):
@@ -685,47 +706,98 @@ def _analyze_requirement(request: AnalyzeRequest, demo_mode: bool, provider: str
         raise HTTPException(status_code=422, detail=f"Schema validation failed: {e}")
 
 
+def _compute_risk_level(report: RequirementReadinessReport) -> str:
+    """
+    Compute risk level based on identified risks (separate from readiness score).
+    
+    Risk is assessed by counting and weighing product, QA, and technical risks.
+    """
+    product_risks = len(report.product_risks)
+    qa_risks = len(report.qa_risks)
+    technical_risks = len(report.technical_risks)
+    
+    # Weight technical risks higher as they often have broader impact
+    weighted_risk_count = product_risks + qa_risks + (technical_risks * 1.5)
+    
+    # Also factor in missing information as it increases uncertainty
+    missing_info_count = len(report.missing_information)
+    weighted_risk_count += missing_info_count * 0.5
+    
+    if weighted_risk_count >= 8:
+        return "Critical"
+    elif weighted_risk_count >= 5:
+        return "High"
+    elif weighted_risk_count >= 2:
+        return "Medium"
+    return "Low"
+
+
+def _compute_qa_complexity(report: RequirementReadinessReport) -> str:
+    """
+    Compute QA complexity based on flows, roles, edge cases, and dependencies.
+    
+    Higher complexity means more test effort required.
+    """
+    complexity_score = 0
+    
+    # Edge cases add complexity
+    edge_case_count = len(report.edge_cases)
+    complexity_score += edge_case_count * 2
+    
+    # Test scenarios indicate flow complexity
+    scenario_count = len(report.suggested_test_scenarios)
+    complexity_score += scenario_count * 1.5
+    
+    # Acceptance criteria indicate required verifications
+    ac_count = len(report.acceptance_criteria)
+    complexity_score += ac_count
+    
+    # Missing information adds uncertainty complexity
+    missing_count = len(report.missing_information)
+    complexity_score += missing_count
+    
+    # Clarification questions suggest unclear requirements
+    question_count = len(report.clarification_questions)
+    complexity_score += question_count * 0.5
+    
+    if complexity_score >= 15:
+        return "High"
+    elif complexity_score >= 8:
+        return "Medium"
+    return "Low"
+
+
+def _compute_automation_candidate(report: RequirementReadinessReport) -> bool:
+    """
+    Determine if requirement is suitable for test automation.
+    
+    True if scenarios are repetitive, testable, and have clear expected outcomes.
+    """
+    # Check if there are automation candidates explicitly identified
+    if report.automation_candidates and len(report.automation_candidates) > 0:
+        return True
+    
+    # Check testability score from breakdown
+    testability = report.score_breakdown.testability if report.score_breakdown else 0
+    
+    # High testability suggests automation potential
+    if testability >= 70:
+        # Also need clear acceptance criteria for automation
+        if len(report.acceptance_criteria) >= 2:
+            return True
+    
+    # Check if test scenarios exist and are well-defined
+    if len(report.suggested_test_scenarios) >= 3:
+        # Multiple scenarios suggest repeatable test patterns
+        return True
+    
+    return False
+
+
 def _render_jira_comment(report: RequirementReadinessReport) -> str:
-    """Render report as a Jira-compatible comment (Atlassian wiki markup)."""
-    lines: list[str] = []
-    
-    rec = report.recommendation.value if report.recommendation else "unknown"
-    color_map = {"ready": "green", "needs_refinement": "orange", "high_risk": "red", "not_ready": "red"}
-    color = color_map.get(rec, "grey")
-    
-    lines.append(f"{{panel:title=AI Requirement Readiness Analysis|borderColor=#{color}}}")
-    lines.append(f"*Readiness Score:* {report.readiness_score}/100")
-    lines.append(f"*Recommendation:* {{color:{color}}}{rec.replace('_', ' ').title()}{{color}}")
-    lines.append("")
-    lines.append(f"*Summary:* {report.summary}")
-    lines.append("{panel}")
-    lines.append("")
-    
-    if report.clarification_questions:
-        lines.append("h4. Clarification Questions")
-        for q in report.clarification_questions:
-            lines.append(f"* {q}")
-        lines.append("")
-    
-    if report.missing_information:
-        lines.append("h4. Missing Information")
-        for item in report.missing_information:
-            lines.append(f"* {item}")
-        lines.append("")
-    
-    all_risks = report.product_risks + report.qa_risks + report.technical_risks
-    if all_risks:
-        lines.append("h4. Identified Risks")
-        for risk in all_risks[:5]:
-            lines.append(f"* {risk}")
-        if len(all_risks) > 5:
-            lines.append(f"_...and {len(all_risks) - 5} more risks_")
-        lines.append("")
-    
-    lines.append("----")
-    lines.append("_Generated by AI Requirement Readiness Analyzer_")
-    
-    return "\n".join(lines)
+    """Render report as a Jira-compatible comment (plain text, no wiki markup)."""
+    # Use the jira_formatter module for consistent plain-text output
+    return format_jira_comment(report)
 
 
 def _render_confluence_page(report: RequirementReadinessReport, issue_key: Optional[str] = None) -> tuple[str, str]:
@@ -734,7 +806,7 @@ def _render_confluence_page(report: RequirementReadinessReport, issue_key: Optio
     page_title = f"{title_prefix}Requirement Readiness Report"
     
     rec = report.recommendation.value if report.recommendation else "unknown"
-    color_map = {"ready": "green", "needs_refinement": "orange", "high_risk": "red", "not_ready": "red"}
+    color_map = {"ready": "green", "needs_review": "yellow", "needs_refinement": "orange", "not_ready": "red"}
     color = color_map.get(rec, "grey")
     
     body_parts = []
@@ -844,6 +916,10 @@ async def analyze(
         issue_key=request.issue_key,
         readiness_score=report.readiness_score,
         recommendation=report.recommendation.value if report.recommendation else "unknown",
+        risk_level=_compute_risk_level(report),
+        qa_complexity=_compute_qa_complexity(report),
+        clarification_count=len(report.clarification_questions),
+        automation_candidate=_compute_automation_candidate(report),
         report=report
     )
 
@@ -863,8 +939,8 @@ async def analyze_jira_comment(
     """
     Analyze a requirement and return a Jira-compatible comment.
     
-    Returns Atlassian wiki markup that can be posted directly as a Jira comment.
-    Ideal for n8n/automation workflows that add comments to Jira issues.
+    Returns plain text (no wiki markup) that can be posted directly as a Jira comment.
+    Ideal for automation workflows that add comments to Jira issues.
     """
     report = _analyze_requirement(request, demo_mode, provider)
     comment = format_jira_comment(report, issue_key=request.issue_key)
@@ -900,6 +976,83 @@ async def analyze_confluence_page(
         issue_key=request.issue_key,
         page_title=page["page_title"],
         page_body=page["page_body"]
+    )
+
+
+@app.post("/format/jira-comment", response_model=JiraCommentResponse, tags=["Formatting"])
+async def format_jira_comment_endpoint(request: JiraCommentFormatRequest):
+    """
+    Format combined analysis + acceptance criteria data as a Jira comment.
+    
+    Accepts pre-computed analysis data and returns a plain-text Jira comment.
+    Use this when you have separate analysis and AC generation results to combine.
+    
+    Returns plain text with real line breaks (no wiki markup).
+    """
+    from .jira_formatter import _sanitize_issue_key, _format_recommendation
+    
+    lines: list[str] = []
+    
+    # Sanitize issue key
+    clean_issue_key = _sanitize_issue_key(request.issue_key)
+    
+    # Title
+    title_suffix = f" — {clean_issue_key}" if clean_issue_key else ""
+    lines.append(f"AI Requirement Readiness Analysis{title_suffix}")
+    lines.append("")
+    
+    # Readiness score and recommendation
+    lines.append(f"Readiness Score: {request.readiness_score}/100")
+    lines.append(f"Recommendation: {_format_recommendation(request.recommendation)}")
+    lines.append("")
+    
+    # Main concerns
+    if request.main_concerns:
+        lines.append("Main Concerns:")
+        for concern in request.main_concerns[:3]:
+            lines.append(f"• {concern}")
+        lines.append("")
+    
+    # Clarification questions
+    if request.clarification_questions:
+        lines.append("Clarification Questions:")
+        for i, q in enumerate(request.clarification_questions[:5], 1):
+            lines.append(f"{i}. {q}")
+        lines.append("")
+    
+    # Acceptance criteria
+    if request.acceptance_criteria:
+        lines.append("Suggested Acceptance Criteria:")
+        for ac in request.acceptance_criteria[:5]:
+            ac_id = ac.get("id", "AC")
+            given = ac.get("given", "")
+            when = ac.get("when", "")
+            then = ac.get("then", "")
+            lines.append(f"{ac_id}:")
+            lines.append(f"  Given: {given}")
+            lines.append(f"  When: {when}")
+            lines.append(f"  Then: {then}")
+        lines.append("")
+    
+    # QA next step
+    lines.append("QA Next Step:")
+    if request.readiness_score >= 80:
+        lines.append("Ready for test planning.")
+    elif request.readiness_score >= 60:
+        lines.append("Address clarification questions before test planning.")
+    elif request.readiness_score >= 40:
+        lines.append("Significant gaps — schedule refinement session.")
+    else:
+        lines.append("Not ready — return to Product Owner for clarification.")
+    lines.append("")
+    
+    # AI note
+    lines.append("AI Note:")
+    lines.append("AI-assisted review. Human PM/QA validation required.")
+    
+    return JiraCommentResponse(
+        issue_key=clean_issue_key,
+        jira_comment="\n".join(lines)
     )
 
 

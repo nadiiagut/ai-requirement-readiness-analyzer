@@ -61,9 +61,9 @@ def test_schema_validation_success_and_derived_recommendation():
     """Test that score is calculated from breakdown and recommendation is derived."""
     data = _sample_report_payload()
     report = RequirementReadinessReport(**data)
-    # All dimensions at 80 -> weighted score = 80
+    # All dimensions at 80 -> weighted score = 80 -> READY (80+ is READY)
     assert report.readiness_score == 80
-    assert report.recommendation == RequirementReadinessRecommendation.NEEDS_REFINEMENT
+    assert report.recommendation == RequirementReadinessRecommendation.READY
 
 
 def test_mismatched_model_score_is_adjusted():
@@ -172,16 +172,22 @@ def test_no_warning_when_score_matches():
 @pytest.mark.parametrize(
     "score,expected",
     [
-        (85, RequirementReadinessRecommendation.READY),
-        (84, RequirementReadinessRecommendation.NEEDS_REFINEMENT),
-        (70, RequirementReadinessRecommendation.NEEDS_REFINEMENT),
-        (69, RequirementReadinessRecommendation.HIGH_RISK),
-        (50, RequirementReadinessRecommendation.HIGH_RISK),
-        (49, RequirementReadinessRecommendation.NOT_READY),
+        # 80-100: READY
+        (100, RequirementReadinessRecommendation.READY),
+        (80, RequirementReadinessRecommendation.READY),
+        # 60-79: NEEDS_REVIEW
+        (79, RequirementReadinessRecommendation.NEEDS_REVIEW),
+        (60, RequirementReadinessRecommendation.NEEDS_REVIEW),
+        # 40-59: NEEDS_REFINEMENT
+        (59, RequirementReadinessRecommendation.NEEDS_REFINEMENT),
+        (40, RequirementReadinessRecommendation.NEEDS_REFINEMENT),
+        # 0-39: NOT_READY
+        (39, RequirementReadinessRecommendation.NOT_READY),
+        (0, RequirementReadinessRecommendation.NOT_READY),
     ],
 )
 def test_recommendation_thresholds(score: int, expected: RequirementReadinessRecommendation):
-    """Test recommendation threshold boundaries."""
+    """Test recommendation threshold boundaries with new calibration."""
     assert RequirementReadinessReport.derive_recommendation(score) == expected
 
 

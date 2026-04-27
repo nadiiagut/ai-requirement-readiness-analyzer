@@ -36,8 +36,8 @@ class RequirementAnalysis(BaseModel):
 
 class RequirementReadinessRecommendation(str, Enum):
     READY = "ready"
+    NEEDS_REVIEW = "needs_review"
     NEEDS_REFINEMENT = "needs_refinement"
-    HIGH_RISK = "high_risk"
     NOT_READY = "not_ready"
 
 
@@ -144,12 +144,12 @@ class RequirementReadinessReport(BaseModel):
 
     @staticmethod
     def derive_recommendation(score: int) -> RequirementReadinessRecommendation:
-        if score >= 85:
+        if score >= 80:
             return RequirementReadinessRecommendation.READY
-        if score >= 70:
+        if score >= 60:
+            return RequirementReadinessRecommendation.NEEDS_REVIEW
+        if score >= 40:
             return RequirementReadinessRecommendation.NEEDS_REFINEMENT
-        if score >= 50:
-            return RequirementReadinessRecommendation.HIGH_RISK
         return RequirementReadinessRecommendation.NOT_READY
 
     @model_validator(mode="after")

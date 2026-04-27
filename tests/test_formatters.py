@@ -61,7 +61,8 @@ class TestJiraFormatter:
         
         assert "AI Requirement Readiness Analysis" in result
         assert f"Readiness Score: {sample_report.readiness_score}/100" in result
-        assert "Recommendation: NOT READY" in result
+        # Score 43 -> NEEDS REFINEMENT (40-59 range)
+        assert "Recommendation: NEEDS REFINEMENT" in result
 
     def test_format_jira_comment_with_issue_key(self, sample_report):
         """Test Jira comment includes issue key in title."""
