@@ -36,6 +36,7 @@ def format_jira_comment(
     edge_cases: Optional[List[str]] = None,
     test_scenarios: Optional[List[dict]] = None,
     automation_candidates: Optional[List[str]] = None,
+    selected_domain_context: Optional[str] = None,
 ) -> str:
     """
     Format a readiness report as a Jira Cloud-compatible comment.
@@ -50,6 +51,7 @@ def format_jira_comment(
         edge_cases: Optional list of edge case strings
         test_scenarios: Optional list of test scenario dicts
         automation_candidates: Optional list of automation candidate strings
+        selected_domain_context: Optional domain context used for analysis
         
     Returns:
         Plain text string ready to post as a Jira comment
@@ -67,9 +69,11 @@ def format_jira_comment(
     lines.append(f"AI Requirement Readiness Analysis{title_suffix}")
     lines.append("")
     
-    # Readiness score and recommendation
+    # Readiness score, recommendation, and domain context
     lines.append(f"Readiness Score: {report.readiness_score}/100")
     lines.append(f"Recommendation: {rec_display}")
+    if selected_domain_context:
+        lines.append(f"Domain Context: {selected_domain_context}")
     lines.append("")
     
     # Main concerns (top risks)

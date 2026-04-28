@@ -1,0 +1,47 @@
+name: cdn_edge_networking
+description: CDN, edge computing, and networking infrastructure context
+
+focus_areas:
+  - Cache invalidation and purge strategies
+  - Edge location routing and failover
+  - Origin shield and protection
+  - TLS/SSL certificate management
+  - DNS configuration and propagation
+  - HTTP/2 and HTTP/3 (QUIC) protocol support
+  - Traffic routing rules and load balancing
+  - DDoS mitigation and rate limiting
+  - Request/response header manipulation
+  - Latency and performance optimization
+
+risk_categories:
+  - Cache consistency across edge locations
+  - Origin overload during cache miss storms
+  - DNS propagation delays
+  - Certificate expiration and renewal
+  - Protocol compatibility issues
+  - Geographic routing accuracy
+  - Edge compute resource limits
+
+typical_concerns:
+  - Cache TTL and invalidation timing
+  - Origin health checks and failover
+  - Edge location selection criteria
+  - SSL/TLS version requirements
+  - Compression and optimization settings
+  - Request routing rules complexity
+  - Real-time traffic analytics
+
+avoid_assumptions:
+  - User-facing UI/UX patterns (this is infrastructure)
+  - User authentication flows (handled at origin)
+  - Database operations (edge is stateless)
+  - User permission models (not edge concern)
+  - Session management (origin responsibility)
+
+clarification_priorities:
+  - Cache behavior (TTL, vary headers, bypass rules)
+  - Origin configuration (health checks, timeout)
+  - Traffic routing requirements
+  - SSL/TLS requirements
+  - Performance SLAs (latency, throughput)
+  - Failover and redundancy requirements

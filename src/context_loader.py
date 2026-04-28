@@ -82,6 +82,96 @@ def list_available_contexts() -> list[str]:
     return sorted(contexts)
 
 
+# Domain classification keyword rules
+# Each domain maps to a set of keywords (lowercase) to match against title, description, and labels
+DOMAIN_KEYWORDS: dict[str, set[str]] = {
+    "cdn_edge_networking": {
+        "cdn", "edge", "cache", "caching", "quic", "http3", "http/3",
+        "origin", "routing", "purge", "tls", "ssl", "dns", "traffic",
+        "edge location", "edge compute", "load balancer", "load balancing",
+        "reverse proxy", "proxy", "bandwidth", "latency", "throughput",
+        "geo", "geolocation", "pop", "point of presence", "anycast",
+        "ddos", "waf", "firewall", "rate limit", "rate-limit",
+        "certificate", "https", "http2", "http/2", "origin shield",
+        "cache invalidation", "ttl", "vary header", "content delivery",
+    },
+    "authentication_security": {
+        "login", "auth", "authentication", "authorization", "users",
+        "roles", "role", "permissions", "permission", "password", "session",
+        "access", "access control", "rbac", "abac", "oauth", "oidc", "saml",
+        "sso", "single sign-on", "mfa", "2fa", "two-factor", "multi-factor",
+        "jwt", "token", "refresh token", "api key", "secret", "credential",
+        "identity", "idp", "identity provider", "ldap", "active directory",
+        "account", "signup", "sign-up", "register", "logout", "sign-out",
+        "password reset", "forgot password", "lockout", "brute force",
+    },
+    "control_panel": {
+        "control panel", "control page", "operator", "admin", "administrator",
+        "device", "panel", "industrial", "controls", "dashboard",
+        "admin panel", "admin dashboard", "management console",
+        "settings page", "configuration page", "system settings",
+        "user management", "tenant", "multi-tenant", "back office",
+        "backoffice", "operator console", "control interface",
+    },
+    "ci_cd_delivery": {
+        "ci", "cd", "ci/cd", "cicd", "pipeline", "deploy", "deployment",
+        "github actions", "gitlab", "gitlab ci", "jenkins", "circleci",
+        "travis", "release", "release automation", "build", "build pipeline",
+        "artifact", "docker", "container", "kubernetes", "k8s", "helm",
+        "terraform", "ansible", "infrastructure as code", "iac",
+        "staging", "production", "prod", "environment", "rollback",
+        "blue-green", "canary", "rolling update", "continuous integration",
+        "continuous delivery", "continuous deployment", "devops",
+    },
+}
+
+
+def classify_domain_context(
+    title: str,
+    description: str,
+    labels: list[str] | None = None
+) -> str:
+    """
+    Classify a requirement into the best-matching domain context.
+    
+    Uses deterministic keyword/label matching. Returns the domain with
+    the most keyword matches. Falls back to 'generic_web' if no matches.
+    
+    Args:
+        title: Requirement title or summary
+        description: Requirement description
+        labels: Optional list of labels/tags
+        
+    Returns:
+        Domain context name (e.g., 'cdn_edge_networking', 'authentication_security')
+    """
+    # Combine all text for matching
+    text = f"{title} {description}".lower()
+    labels_lower = [label.lower() for label in (labels or [])]
+    
+    # Score each domain by keyword matches
+    scores: dict[str, int] = {}
+    
+    for domain, keywords in DOMAIN_KEYWORDS.items():
+        score = 0
+        for keyword in keywords:
+            # Check in text
+            if keyword in text:
+                score += 1
+            # Check in labels (higher weight)
+            if any(keyword in label for label in labels_lower):
+                score += 2
+        scores[domain] = score
+    
+    # Find domain with highest score
+    if scores:
+        best_domain = max(scores, key=lambda d: scores[d])
+        if scores[best_domain] > 0:
+            return best_domain
+    
+    return DEFAULT_CONTEXT
+
+
 def load_context(context_name: Optional[str] = None) -> DomainContext:
     """
     Load a domain context by name.

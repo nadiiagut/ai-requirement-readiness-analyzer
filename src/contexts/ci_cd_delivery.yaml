@@ -1,0 +1,45 @@
+name: ci_cd_delivery
+description: CI/CD, deployment automation, and release management context
+
+focus_areas:
+  - Build pipeline configuration
+  - Automated testing integration
+  - Deployment strategies (blue-green, canary, rolling)
+  - Environment management (dev, staging, prod)
+  - Artifact versioning and storage
+  - Release approval workflows
+  - Rollback procedures
+  - Infrastructure as Code (IaC)
+
+risk_categories:
+  - Pipeline failure and recovery
+  - Deployment rollback complexity
+  - Environment drift and consistency
+  - Secret management in pipelines
+  - Build reproducibility
+  - Test flakiness and reliability
+  - Release coordination issues
+
+typical_concerns:
+  - Build trigger conditions
+  - Test coverage requirements
+  - Deployment approval gates
+  - Environment variable management
+  - Artifact retention policies
+  - Monitoring and alerting integration
+  - Documentation generation
+
+avoid_assumptions:
+  - End-user UI/UX requirements
+  - Business logic specifics
+  - Runtime application behavior (focus on deployment)
+  - User-facing authentication (pipeline auth is different)
+
+clarification_priorities:
+  - Target environments and promotion path
+  - Deployment strategy requirements
+  - Rollback criteria and procedures
+  - Testing requirements per stage
+  - Approval workflow and stakeholders
+  - Secret and credential handling
+  - Notification and alerting requirements

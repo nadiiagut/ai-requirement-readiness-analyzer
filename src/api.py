@@ -18,6 +18,7 @@ from .jira_formatter import format_jira_comment
 from .confluence_formatter import format_confluence_page
 from .duplicate_detector import find_duplicates
 from .jira_adf import extract_text_from_adf
+from .context_loader import classify_domain_context
 
 
 app = FastAPI(
@@ -139,6 +140,7 @@ class AnalyzeResponse(BaseModel):
     qa_complexity: str = Field(..., description="QA complexity: Low, Medium, High")
     clarification_count: int = Field(..., description="Number of clarification questions")
     automation_candidate: bool = Field(..., description="True if requirement is suitable for automation")
+    selected_domain_context: str = Field(..., description="Domain context used for analysis (auto-classified or explicit)")
     report: RequirementReadinessReport
 
 
@@ -247,9 +249,13 @@ class AcceptanceCriteriaRequest(BaseModel):
         default="",
         description="Requirement description (plain text or ADF)"
     )
+    labels: Optional[List[str]] = Field(
+        default=None,
+        description="Jira labels (used for domain auto-classification)"
+    )
     domain_context: Optional[str] = Field(
         default=None,
-        description="Domain context (e.g., control_panel, embedded_device)"
+        description="Domain context (e.g., control_panel, embedded_device). If not provided, auto-classified from title/description/labels."
     )
 
     @field_validator('description', mode='before')
@@ -262,6 +268,7 @@ class AcceptanceCriteriaRequest(BaseModel):
 class AcceptanceCriteriaResponse(BaseModel):
     """Response body for /analyze/acceptance-criteria endpoint."""
     issue_key: Optional[str] = None
+    selected_domain_context: str = Field(..., description="Domain context used for analysis (auto-classified or explicit)")
     acceptance_criteria: List[AcceptanceCriterion] = Field(
         ..., 
         description="List of acceptance criteria (max 5)",
@@ -282,6 +289,84 @@ class AcceptanceCriteriaResponse(BaseModel):
         description="Scenarios worth automating in CI/CD",
         max_length=5
     )
+
+
+class SprintIssue(BaseModel):
+    """A single issue in a sprint for analysis."""
+    issue_key: str = Field(..., description="Jira issue key (e.g., NG-1)")
+    title: str = Field(..., description="Issue title/summary")
+    description: Union[str, dict, None] = Field(
+        default="",
+        description="Issue description (plain text or ADF)"
+    )
+    status: Optional[str] = Field(default=None, description="Issue status (e.g., To Do, In Progress)")
+    priority: Optional[str] = Field(default=None, description="Issue priority (e.g., High, Medium, Low)")
+    labels: List[str] = Field(default_factory=list, description="Issue labels")
+
+    @field_validator('description', mode='before')
+    @classmethod
+    def convert_adf_to_text(cls, v: Any) -> str:
+        """Convert ADF description to plain text."""
+        return extract_text_from_adf(v)
+
+
+class SprintAnalysisRequest(BaseModel):
+    """Request body for /analyze/sprint endpoint."""
+    sprint_name: str = Field(..., description="Sprint name")
+    sprint_id: Optional[int] = Field(default=None, description="Sprint ID")
+    domain_context: Optional[str] = Field(
+        default=None,
+        description="Domain context (e.g., control_panel, embedded_device)"
+    )
+    issues: List[SprintIssue] = Field(
+        ...,
+        description="List of issues in the sprint",
+        min_length=1
+    )
+
+
+class RiskyEntry(BaseModel):
+    """A risky issue entry in the sprint."""
+    issue_key: str = Field(..., description="Issue key")
+    title: str = Field(..., description="Issue title")
+    reason: str = Field(..., description="Why this is risky")
+    risk: str = Field(..., description="Risk level: Low, Medium, High, Critical")
+
+
+class SprintAnalysisResponse(BaseModel):
+    """Response body for /analyze/sprint endpoint."""
+    sprint_name: str = Field(..., description="Sprint name")
+    context_distribution: dict[str, int] = Field(
+        ..., 
+        description="Distribution of domain contexts across sprint issues (context_name -> issue_count)"
+    )
+    sprint_health_score: int = Field(..., ge=0, le=100, description="Overall sprint health 0-100")
+    delivery_confidence: str = Field(..., description="Delivery confidence: Low, Medium, High")
+    total_issues: int = Field(..., description="Total number of issues in sprint")
+    ready_count: int = Field(..., description="Issues ready for development")
+    needs_review_count: int = Field(..., description="Issues needing review")
+    needs_refinement_count: int = Field(..., description="Issues needing refinement")
+    not_ready_count: int = Field(default=0, description="Issues not ready")
+    risky_entries: List[RiskyEntry] = Field(default_factory=list, description="Issues with elevated risk")
+    top_risks: List[str] = Field(default_factory=list, description="Top sprint-level risks")
+    qa_focus_areas: List[str] = Field(default_factory=list, description="Areas QA should focus on")
+    blocked_candidates: List[str] = Field(default_factory=list, description="Issues that may block others")
+    recommended_actions: List[str] = Field(default_factory=list, description="Recommended actions for sprint success")
+    executive_summary: str = Field(..., description="Executive summary of sprint readiness")
+
+
+class ConfluenceSprintPageRequest(BaseModel):
+    """Request body for /format/confluence-sprint-page endpoint."""
+    sprint_analysis: SprintAnalysisResponse = Field(
+        ...,
+        description="Sprint analysis output from /analyze/sprint"
+    )
+
+
+class ConfluenceSprintPageResponse(BaseModel):
+    """Response body for /format/confluence-sprint-page endpoint."""
+    page_title: str = Field(..., description="Confluence page title")
+    page_body_storage: str = Field(..., description="Confluence storage-format HTML body")
 
 
 def _get_demo_response(title: str, description: str, domain_context: Optional[str] = None) -> str:
@@ -794,6 +879,333 @@ def _compute_automation_candidate(report: RequirementReadinessReport) -> bool:
     return False
 
 
+def _classify_issue_by_labels(labels: List[str]) -> Optional[str]:
+    """
+    Classify issue readiness based on labels.
+    
+    Returns: 'ready', 'needs_review', 'needs_refinement', or None if no relevant label.
+    """
+    labels_lower = [l.lower().replace("_", "-").replace(" ", "-") for l in labels]
+    
+    if any(l in ["ready-for-sprint", "ready", "sprint-ready", "dev-ready"] for l in labels_lower):
+        return "ready"
+    if any(l in ["needs-review", "review", "needs-qa-review"] for l in labels_lower):
+        return "needs_review"
+    if any(l in ["needs-refinement", "refinement", "needs-grooming", "backlog"] for l in labels_lower):
+        return "needs_refinement"
+    return None
+
+
+def _analyze_sprint_issue(
+    issue: "SprintIssue",
+    domain_context: Optional[str],
+    demo_mode: bool,
+    provider: str
+) -> dict:
+    """
+    Analyze a single sprint issue and return classification data.
+    
+    Returns dict with: readiness, risk_level, risks, qa_areas, is_risky, reason
+    """
+    # First check labels for explicit classification
+    label_readiness = _classify_issue_by_labels(issue.labels)
+    
+    # Analyze the requirement
+    request = AnalyzeRequest(
+        issue_key=issue.issue_key,
+        title=issue.title,
+        description=issue.description,
+        domain_context=domain_context,
+    )
+    
+    try:
+        report = _analyze_requirement(request, demo_mode, provider)
+        
+        # Determine readiness (labels take precedence if present)
+        if label_readiness:
+            readiness = label_readiness
+        else:
+            readiness = report.recommendation.value if report.recommendation else "needs_refinement"
+        
+        # Compute risk level
+        risk_level = _compute_risk_level(report)
+        
+        # Collect risks
+        all_risks = report.product_risks + report.qa_risks + report.technical_risks
+        
+        # Collect QA focus areas
+        qa_areas = []
+        if report.edge_cases:
+            qa_areas.extend(report.edge_cases[:2])
+        if report.qa_risks:
+            qa_areas.extend(report.qa_risks[:2])
+        
+        # Determine if this is a risky entry
+        is_risky = False
+        reason = ""
+        
+        # needs-refinement in active sprint is risky
+        if readiness == "needs_refinement":
+            is_risky = True
+            reason = "Needs refinement but already in sprint"
+        elif readiness == "not_ready":
+            is_risky = True
+            reason = "Not ready for development"
+        elif risk_level in ["High", "Critical"]:
+            is_risky = True
+            reason = f"{risk_level} risk: {all_risks[0] if all_risks else 'Multiple concerns identified'}"
+        elif report.readiness_score < 50:
+            is_risky = True
+            reason = f"Low readiness score ({report.readiness_score}/100)"
+        
+        # Check for blocking indicators
+        is_blocker = False
+        blocker_keywords = ["blocks", "blocking", "prerequisite", "depends on", "dependency"]
+        desc_lower = (issue.description or "").lower()
+        title_lower = issue.title.lower()
+        if any(kw in desc_lower or kw in title_lower for kw in blocker_keywords):
+            is_blocker = True
+        
+        return {
+            "readiness": readiness,
+            "readiness_score": report.readiness_score,
+            "risk_level": risk_level,
+            "risks": all_risks[:3],
+            "qa_areas": qa_areas[:3],
+            "is_risky": is_risky,
+            "reason": reason,
+            "is_blocker": is_blocker,
+            "clarification_count": len(report.clarification_questions),
+        }
+    except Exception:
+        # If analysis fails, mark as needing refinement
+        return {
+            "readiness": label_readiness or "needs_refinement",
+            "readiness_score": 0,
+            "risk_level": "Medium",
+            "risks": ["Unable to analyze requirement"],
+            "qa_areas": [],
+            "is_risky": True,
+            "reason": "Analysis failed - requires manual review",
+            "is_blocker": False,
+            "clarification_count": 0,
+        }
+
+
+def _compute_sprint_health(
+    ready_count: int,
+    needs_review_count: int,
+    needs_refinement_count: int,
+    not_ready_count: int,
+    total_issues: int,
+    risky_count: int
+) -> int:
+    """
+    Compute sprint health score (0-100).
+    
+    Factors:
+    - Ready issues boost score
+    - Needs refinement in sprint reduces score significantly
+    - Not ready issues reduce score heavily
+    - Risky entries reduce score
+    """
+    if total_issues == 0:
+        return 0
+    
+    # Base score from readiness distribution
+    ready_weight = 100
+    review_weight = 70
+    refinement_weight = 30
+    not_ready_weight = 0
+    
+    weighted_sum = (
+        ready_count * ready_weight +
+        needs_review_count * review_weight +
+        needs_refinement_count * refinement_weight +
+        not_ready_count * not_ready_weight
+    )
+    base_score = weighted_sum / total_issues
+    
+    # Penalty for risky entries (up to 20 points)
+    risk_penalty = min(20, (risky_count / total_issues) * 30)
+    
+    # Penalty if majority needs refinement (up to 15 points)
+    refinement_ratio = (needs_refinement_count + not_ready_count) / total_issues
+    refinement_penalty = refinement_ratio * 15
+    
+    final_score = max(0, min(100, base_score - risk_penalty - refinement_penalty))
+    return int(final_score)
+
+
+def _compute_delivery_confidence(sprint_health: int, risky_ratio: float) -> str:
+    """Compute delivery confidence based on sprint health and risky ratio."""
+    if sprint_health >= 75 and risky_ratio < 0.2:
+        return "High"
+    elif sprint_health >= 50 and risky_ratio < 0.4:
+        return "Medium"
+    return "Low"
+
+
+def _generate_executive_summary(
+    sprint_name: str,
+    sprint_health: int,
+    delivery_confidence: str,
+    ready_count: int,
+    needs_refinement_count: int,
+    not_ready_count: int,
+    total_issues: int,
+    risky_count: int
+) -> str:
+    """Generate an executive summary for the sprint."""
+    ready_pct = int((ready_count / total_issues) * 100) if total_issues > 0 else 0
+    
+    if delivery_confidence == "High":
+        status = f"Sprint '{sprint_name}' is well-prepared for delivery."
+        detail = f"{ready_pct}% of issues ({ready_count}/{total_issues}) are ready for development."
+    elif delivery_confidence == "Medium":
+        status = f"Sprint '{sprint_name}' has moderate delivery risk."
+        if needs_refinement_count > 0:
+            detail = f"{needs_refinement_count} issue(s) still need refinement before development can begin safely."
+        else:
+            detail = f"{risky_count} issue(s) have elevated risk that should be monitored."
+    else:
+        status = f"Sprint '{sprint_name}' has significant delivery risk."
+        if not_ready_count > 0:
+            detail = f"{not_ready_count} issue(s) are not ready for sprint. Consider moving to backlog."
+        elif needs_refinement_count > 0:
+            detail = f"{needs_refinement_count} issue(s) need refinement. Sprint scope may need adjustment."
+        else:
+            detail = f"Multiple issues have elevated risk. Close monitoring recommended."
+    
+    return f"{status} {detail} Health score: {sprint_health}/100."
+
+
+def _render_confluence_sprint_page(analysis: "SprintAnalysisResponse") -> dict:
+    """
+    Render sprint analysis as Confluence storage-format HTML.
+    
+    Uses only safe tags: h1, h2, h3, p, ul, li, table, tr, th, td, strong.
+    No markdown, no escaped newlines.
+    """
+    parts = []
+    
+    # 1. Sprint Quality Dashboard title
+    parts.append(f"<h1>{analysis.sprint_name} Quality Dashboard</h1>")
+    
+    # 2. Executive Summary
+    parts.append("<h2>Executive Summary</h2>")
+    parts.append(f"<p>{analysis.executive_summary}</p>")
+    
+    # 3. Sprint Health Score
+    parts.append("<h2>Sprint Health Score</h2>")
+    health_color = "green" if analysis.sprint_health_score >= 75 else "orange" if analysis.sprint_health_score >= 50 else "red"
+    parts.append(f"<p><strong>Score:</strong> {analysis.sprint_health_score}/100</p>")
+    
+    # 4. Delivery Confidence
+    parts.append("<h2>Delivery Confidence</h2>")
+    confidence_color = "green" if analysis.delivery_confidence == "High" else "orange" if analysis.delivery_confidence == "Medium" else "red"
+    parts.append(f"<p><strong>{analysis.delivery_confidence}</strong></p>")
+    
+    # 5. Context Distribution
+    parts.append("<h2>Domain Context Distribution</h2>")
+    if analysis.context_distribution:
+        parts.append("<table>")
+        parts.append("<tr><th>Domain Context</th><th>Issues</th></tr>")
+        for context, count in sorted(analysis.context_distribution.items(), key=lambda x: -x[1]):
+            parts.append(f"<tr><td>{context}</td><td>{count}</td></tr>")
+        parts.append("</table>")
+    else:
+        parts.append("<p>No context distribution available.</p>")
+    
+    # 6. Readiness Distribution
+    parts.append("<h2>Readiness Distribution</h2>")
+    parts.append("<table>")
+    parts.append("<tr><th>Status</th><th>Count</th><th>Percentage</th></tr>")
+    total = analysis.total_issues
+    if total > 0:
+        ready_pct = int((analysis.ready_count / total) * 100)
+        review_pct = int((analysis.needs_review_count / total) * 100)
+        refinement_pct = int((analysis.needs_refinement_count / total) * 100)
+        not_ready_pct = int((analysis.not_ready_count / total) * 100)
+        parts.append(f"<tr><td>Ready</td><td>{analysis.ready_count}</td><td>{ready_pct}%</td></tr>")
+        parts.append(f"<tr><td>Needs Review</td><td>{analysis.needs_review_count}</td><td>{review_pct}%</td></tr>")
+        parts.append(f"<tr><td>Needs Refinement</td><td>{analysis.needs_refinement_count}</td><td>{refinement_pct}%</td></tr>")
+        parts.append(f"<tr><td>Not Ready</td><td>{analysis.not_ready_count}</td><td>{not_ready_pct}%</td></tr>")
+        parts.append(f"<tr><td><strong>Total</strong></td><td><strong>{total}</strong></td><td><strong>100%</strong></td></tr>")
+    parts.append("</table>")
+    
+    # 6. Risky Sprint Entries
+    parts.append("<h2>Risky Sprint Entries</h2>")
+    if analysis.risky_entries:
+        parts.append("<table>")
+        parts.append("<tr><th>Issue</th><th>Title</th><th>Risk</th><th>Reason</th></tr>")
+        for entry in analysis.risky_entries:
+            parts.append(f"<tr><td>{entry.issue_key}</td><td>{entry.title}</td><td>{entry.risk}</td><td>{entry.reason}</td></tr>")
+        parts.append("</table>")
+    else:
+        parts.append("<p>No risky entries identified.</p>")
+    
+    # 7. Top Risks
+    parts.append("<h2>Top Risks</h2>")
+    if analysis.top_risks:
+        parts.append("<ul>")
+        for risk in analysis.top_risks:
+            parts.append(f"<li>{risk}</li>")
+        parts.append("</ul>")
+    else:
+        parts.append("<p>No significant risks identified.</p>")
+    
+    # 8. QA Focus Areas
+    parts.append("<h2>QA Focus Areas</h2>")
+    if analysis.qa_focus_areas:
+        parts.append("<ul>")
+        for area in analysis.qa_focus_areas:
+            parts.append(f"<li>{area}</li>")
+        parts.append("</ul>")
+    else:
+        parts.append("<p>No specific QA focus areas identified.</p>")
+    
+    # 9. Recommended Actions
+    parts.append("<h2>Recommended Actions</h2>")
+    if analysis.recommended_actions:
+        parts.append("<ul>")
+        for action in analysis.recommended_actions:
+            parts.append(f"<li>{action}</li>")
+        parts.append("</ul>")
+    else:
+        parts.append("<p>No specific actions recommended.</p>")
+    
+    # 10. Story Breakdown
+    parts.append("<h2>Story Breakdown</h2>")
+    parts.append("<h3>Summary</h3>")
+    parts.append("<table>")
+    parts.append("<tr><th>Metric</th><th>Value</th></tr>")
+    parts.append(f"<tr><td>Total Issues</td><td>{analysis.total_issues}</td></tr>")
+    parts.append(f"<tr><td>Ready for Development</td><td>{analysis.ready_count}</td></tr>")
+    parts.append(f"<tr><td>Needs Review</td><td>{analysis.needs_review_count}</td></tr>")
+    parts.append(f"<tr><td>Needs Refinement</td><td>{analysis.needs_refinement_count}</td></tr>")
+    parts.append(f"<tr><td>Not Ready</td><td>{analysis.not_ready_count}</td></tr>")
+    parts.append(f"<tr><td>Risky Entries</td><td>{len(analysis.risky_entries)}</td></tr>")
+    if analysis.blocked_candidates:
+        parts.append(f"<tr><td>Potential Blockers</td><td>{len(analysis.blocked_candidates)}</td></tr>")
+    parts.append("</table>")
+    
+    if analysis.blocked_candidates:
+        parts.append("<h3>Potential Blockers</h3>")
+        parts.append("<ul>")
+        for blocker in analysis.blocked_candidates:
+            parts.append(f"<li>{blocker}</li>")
+        parts.append("</ul>")
+    
+    page_body = "".join(parts)
+    page_title = f"{analysis.sprint_name} Quality Dashboard"
+    
+    return {
+        "page_title": page_title,
+        "page_body_storage": page_body
+    }
+
+
 def _render_jira_comment(report: RequirementReadinessReport) -> str:
     """Render report as a Jira-compatible comment (plain text, no wiki markup)."""
     # Use the jira_formatter module for consistent plain-text output
@@ -900,6 +1312,9 @@ async def analyze(
     
     Accepts Jira-like payload with optional fields: issue_type, priority, labels.
     
+    Domain context is auto-classified based on keywords in title, description, and labels.
+    Explicit domain_context in request overrides auto-classification.
+    
     The report includes:
     - Readiness score (0-100)
     - Recommendation (ready, needs_refinement, high_risk, not_ready)
@@ -909,7 +1324,21 @@ async def analyze(
     - Product/QA/Technical risks
     - Suggested test scenarios
     - Clarification questions
+    - Selected domain context
     """
+    # Auto-classify domain context if not explicitly provided
+    if request.domain_context:
+        selected_context = request.domain_context
+    else:
+        selected_context = classify_domain_context(
+            title=request.title,
+            description=request.description or "",
+            labels=request.labels
+        )
+    
+    # Update request with selected context for analysis
+    request.domain_context = selected_context
+    
     report = _analyze_requirement(request, demo_mode, provider)
     
     return AnalyzeResponse(
@@ -920,6 +1349,7 @@ async def analyze(
         qa_complexity=_compute_qa_complexity(report),
         clarification_count=len(report.clarification_questions),
         automation_candidate=_compute_automation_candidate(report),
+        selected_domain_context=selected_context,
         report=report
     )
 
@@ -939,11 +1369,31 @@ async def analyze_jira_comment(
     """
     Analyze a requirement and return a Jira-compatible comment.
     
+    Domain context is auto-classified based on keywords in title, description, and labels.
+    Explicit domain_context in request overrides auto-classification.
+    
     Returns plain text (no wiki markup) that can be posted directly as a Jira comment.
     Ideal for automation workflows that add comments to Jira issues.
     """
+    # Auto-classify domain context if not explicitly provided
+    if request.domain_context:
+        selected_context = request.domain_context
+    else:
+        selected_context = classify_domain_context(
+            title=request.title,
+            description=request.description or "",
+            labels=request.labels
+        )
+    
+    # Update request with selected context for analysis
+    request.domain_context = selected_context
+    
     report = _analyze_requirement(request, demo_mode, provider)
-    comment = format_jira_comment(report, issue_key=request.issue_key)
+    comment = format_jira_comment(
+        report,
+        issue_key=request.issue_key,
+        selected_domain_context=selected_context
+    )
     
     return JiraCommentResponse(
         issue_key=request.issue_key,
@@ -976,6 +1426,213 @@ async def analyze_confluence_page(
         issue_key=request.issue_key,
         page_title=page["page_title"],
         page_body=page["page_body"]
+    )
+
+
+@app.post("/analyze/sprint", response_model=SprintAnalysisResponse, tags=["Analysis"])
+async def analyze_sprint(
+    request: SprintAnalysisRequest,
+    demo_mode: bool = Query(
+        default=False,
+        description="Use demo mode (no LLM call, returns sample data)"
+    ),
+    provider: str = Query(
+        default="openai",
+        description="LLM provider to use"
+    )
+):
+    """
+    Analyze all issues in a sprint and return sprint-level health metrics.
+    
+    Each issue is classified into its own domain context based on title, description, and labels.
+    If explicit domain_context is provided in the request, all issues use that context.
+    Otherwise, each issue is analyzed with its individually classified context.
+    
+    Provides:
+    - Context distribution (domain_context -> issue_count)
+    - Sprint health score (0-100)
+    - Delivery confidence (Low/Medium/High)
+    - Issue readiness breakdown
+    - Risky entries with reasons
+    - Top risks and QA focus areas
+    - Recommended actions
+    - Executive summary
+    
+    Uses labels (needs-refinement, needs-review, ready-for-sprint) when present.
+    Treats needs-refinement in active sprint as a sprint risk.
+    """
+    total_issues = len(request.issues)
+    
+    # Track context distribution
+    context_distribution: dict[str, int] = {}
+    
+    # Analyze each issue with its own classified context (unless explicit context provided)
+    issue_results = []
+    for issue in request.issues:
+        # Determine context for this issue
+        if request.domain_context:
+            # Explicit context overrides auto-classification for all issues
+            issue_context = request.domain_context
+        else:
+            # Auto-classify each issue individually
+            issue_context = classify_domain_context(
+                title=issue.title,
+                description=issue.description or "",
+                labels=issue.labels
+            )
+        
+        # Track distribution
+        context_distribution[issue_context] = context_distribution.get(issue_context, 0) + 1
+        
+        # Analyze with the issue's context
+        result = _analyze_sprint_issue(issue, issue_context, demo_mode, provider)
+        result["issue_key"] = issue.issue_key
+        result["title"] = issue.title
+        result["priority"] = issue.priority
+        result["domain_context"] = issue_context
+        issue_results.append(result)
+    
+    # Count by readiness
+    ready_count = sum(1 for r in issue_results if r["readiness"] == "ready")
+    needs_review_count = sum(1 for r in issue_results if r["readiness"] == "needs_review")
+    needs_refinement_count = sum(1 for r in issue_results if r["readiness"] == "needs_refinement")
+    not_ready_count = sum(1 for r in issue_results if r["readiness"] == "not_ready")
+    
+    # Collect risky entries
+    risky_entries = [
+        RiskyEntry(
+            issue_key=r["issue_key"],
+            title=r["title"],
+            reason=r["reason"],
+            risk=r["risk_level"]
+        )
+        for r in issue_results if r["is_risky"]
+    ]
+    risky_count = len(risky_entries)
+    
+    # Compute sprint health
+    sprint_health = _compute_sprint_health(
+        ready_count, needs_review_count, needs_refinement_count,
+        not_ready_count, total_issues, risky_count
+    )
+    
+    # Compute delivery confidence
+    risky_ratio = risky_count / total_issues if total_issues > 0 else 0
+    delivery_confidence = _compute_delivery_confidence(sprint_health, risky_ratio)
+    
+    # Collect top risks (deduplicated)
+    all_risks = []
+    for r in issue_results:
+        all_risks.extend(r["risks"])
+    # Deduplicate while preserving order
+    seen_risks = set()
+    top_risks = []
+    for risk in all_risks:
+        if risk not in seen_risks:
+            seen_risks.add(risk)
+            top_risks.append(risk)
+            if len(top_risks) >= 5:
+                break
+    
+    # Collect QA focus areas (deduplicated)
+    all_qa_areas = []
+    for r in issue_results:
+        all_qa_areas.extend(r["qa_areas"])
+    seen_qa = set()
+    qa_focus_areas = []
+    for area in all_qa_areas:
+        if area not in seen_qa:
+            seen_qa.add(area)
+            qa_focus_areas.append(area)
+            if len(qa_focus_areas) >= 5:
+                break
+    
+    # Identify blocked candidates
+    blocked_candidates = [
+        f"{r['issue_key']}: {r['title']}"
+        for r in issue_results if r["is_blocker"]
+    ][:3]
+    
+    # Generate recommended actions
+    recommended_actions = []
+    if needs_refinement_count > 0:
+        recommended_actions.append(
+            f"Schedule refinement session for {needs_refinement_count} issue(s) before sprint starts"
+        )
+    if not_ready_count > 0:
+        recommended_actions.append(
+            f"Consider moving {not_ready_count} not-ready issue(s) to backlog"
+        )
+    high_priority_risky = [r for r in issue_results if r["is_risky"] and r.get("priority") in ["High", "Highest", "Critical"]]
+    if high_priority_risky:
+        recommended_actions.append(
+            f"Review {len(high_priority_risky)} high-priority risky item(s) with Product Owner"
+        )
+    total_clarifications = sum(r["clarification_count"] for r in issue_results)
+    if total_clarifications > 5:
+        recommended_actions.append(
+            f"Address {total_clarifications} clarification questions across sprint issues"
+        )
+    if not recommended_actions:
+        if delivery_confidence == "High":
+            recommended_actions.append("Sprint is well-prepared. Proceed with confidence.")
+        else:
+            recommended_actions.append("Monitor risky items during sprint execution.")
+    
+    # Generate executive summary
+    executive_summary = _generate_executive_summary(
+        request.sprint_name, sprint_health, delivery_confidence,
+        ready_count, needs_refinement_count, not_ready_count,
+        total_issues, risky_count
+    )
+    
+    return SprintAnalysisResponse(
+        sprint_name=request.sprint_name,
+        context_distribution=context_distribution,
+        sprint_health_score=sprint_health,
+        delivery_confidence=delivery_confidence,
+        total_issues=total_issues,
+        ready_count=ready_count,
+        needs_review_count=needs_review_count,
+        needs_refinement_count=needs_refinement_count,
+        not_ready_count=not_ready_count,
+        risky_entries=risky_entries,
+        top_risks=top_risks,
+        qa_focus_areas=qa_focus_areas,
+        blocked_candidates=blocked_candidates,
+        recommended_actions=recommended_actions,
+        executive_summary=executive_summary
+    )
+
+
+@app.post("/format/confluence-sprint-page", response_model=ConfluenceSprintPageResponse, tags=["Formatting"])
+async def format_confluence_sprint_page(request: ConfluenceSprintPageRequest):
+    """
+    Format sprint analysis as a Confluence page in storage format.
+    
+    Takes the output from /analyze/sprint and generates a Confluence-compatible
+    HTML page with all sprint quality metrics.
+    
+    Sections included:
+    1. Sprint Quality Dashboard title
+    2. Executive Summary
+    3. Sprint Health Score
+    4. Delivery Confidence
+    5. Readiness Distribution
+    6. Risky Sprint Entries
+    7. Top Risks
+    8. QA Focus Areas
+    9. Recommended Actions
+    10. Story Breakdown
+    
+    Uses only safe HTML tags (h1, h2, h3, p, ul, li, table, tr, th, td, strong).
+    No markdown, no escaped newlines.
+    """
+    result = _render_confluence_sprint_page(request.sprint_analysis)
+    
+    return ConfluenceSprintPageResponse(
+        page_title=result["page_title"],
+        page_body_storage=result["page_body_storage"]
     )
 
 
@@ -1333,8 +1990,14 @@ async def generate_acceptance_criteria(request: AcceptanceCriteriaRequest):
     """
     Generate acceptance criteria, edge cases, test scenarios, and automation candidates.
     
+    Domain context is auto-classified based on keywords in title, description, and labels.
+    Explicit domain_context in request overrides auto-classification.
+    
     Uses domain context to provide relevant suggestions:
+    - **cdn_edge_networking**: Cache, routing, TLS, origin protection
+    - **authentication_security**: Login, permissions, session management
     - **control_panel**: Permission checks, audit logging, concurrent access
+    - **ci_cd_delivery**: Pipeline, deployment, release automation
     - **embedded_device**: Resource constraints, power management, communication
     - **media_streaming**: DRM, buffering, adaptive bitrate
     - **generic_web** (default): Standard web app patterns
@@ -1344,15 +2007,27 @@ async def generate_acceptance_criteria(request: AcceptanceCriteriaRequest):
     - Up to 5 edge cases (failure modes, permissions, empty states, invalid input, concurrency)
     - Up to 5 test scenarios (positive, negative, boundary)
     - Up to 5 automation candidates (CI/CD worthy scenarios)
+    - Selected domain context
     """
+    # Auto-classify domain context if not explicitly provided
+    if request.domain_context:
+        selected_context = request.domain_context
+    else:
+        selected_context = classify_domain_context(
+            title=request.title,
+            description=request.description or "",
+            labels=request.labels
+        )
+    
     result = _generate_acceptance_criteria(
         title=request.title,
         description=request.description,
-        domain_context=request.domain_context
+        domain_context=selected_context
     )
     
     return AcceptanceCriteriaResponse(
         issue_key=request.issue_key,
+        selected_domain_context=selected_context,
         acceptance_criteria=[
             AcceptanceCriterion(**ac) for ac in result["acceptance_criteria"]
         ],

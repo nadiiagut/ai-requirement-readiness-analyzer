@@ -1,0 +1,45 @@
+name: authentication_security
+description: Authentication, authorization, and security domain context
+
+focus_areas:
+  - Authentication flow (login, logout, MFA)
+  - Authorization and access control (RBAC, ABAC)
+  - Session management and token handling
+  - Password policies and credential storage
+  - OAuth/OIDC/SAML integration
+  - API key and secret management
+  - Security audit logging
+  - Rate limiting and brute force protection
+
+risk_categories:
+  - Credential exposure and leakage
+  - Session hijacking and fixation
+  - Privilege escalation vulnerabilities
+  - Token security (JWT, refresh tokens)
+  - Compliance violations (GDPR, SOC2)
+  - Account enumeration attacks
+  - Insecure password handling
+
+typical_concerns:
+  - Password complexity requirements
+  - Session timeout policies
+  - MFA enrollment and recovery
+  - Role/permission inheritance
+  - Audit trail completeness
+  - Secure token storage
+  - Account lockout policies
+
+avoid_assumptions:
+  - UI layout and design patterns
+  - General business logic
+  - Infrastructure concerns (unless security-related)
+  - Performance optimization (unless security tradeoff)
+
+clarification_priorities:
+  - Authentication method requirements
+  - Permission model and role definitions
+  - Session lifetime and renewal policies
+  - MFA requirements and fallback procedures
+  - Password policy specifications
+  - Audit and compliance requirements
+  - Integration with identity providers

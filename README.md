@@ -1,10 +1,12 @@
 # AI Requirement Readiness Analyzer
 
-An AI-powered requirement quality analysis engine for software delivery teams. Analyze user stories, tickets, and specifications to detect gaps, generate acceptance criteria, and reduce delivery risk before development begins.
+An AI-powered requirement quality analysis engine for software delivery teams. Supports both **issue-level requirement readiness analysis** and **sprint-level readiness/risk analysis**.
+
+Analyze individual user stories to detect gaps and generate acceptance criteria, or analyze entire sprints to assess delivery risk and team readiness before development begins.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-136%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-259%20passed-brightgreen.svg)](#testing)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com/)
 
 ---
@@ -29,6 +31,8 @@ Studies show that **fixing a defect in production costs 100x more** than catchin
 
 ## Features
 
+### Issue-Level Analysis
+
 | Capability | Description |
 |------------|-------------|
 | **Readiness Scoring** | 0-100 score across 7 quality dimensions with weighted breakdown |
@@ -39,6 +43,22 @@ Studies show that **fixing a defect in production costs 100x more** than catchin
 | **Automation Candidates** | Identifies scenarios suitable for CI/CD automation |
 | **QA Risk Analysis** | Testability concerns, coverage gaps, validation risks |
 | **Domain-Aware Analysis** | Optional domain context for specialized industries |
+
+### Sprint-Level Analysis
+
+AI-assisted sprint readiness and delivery risk reporting.
+
+| Capability | Description |
+|------------|-------------|
+| **Sprint Health Score** | 0-100 aggregate score reflecting overall sprint readiness |
+| **Delivery Confidence** | High/Medium/Low confidence rating for sprint completion |
+| **Readiness Distribution** | Breakdown of ready, needs-review, needs-refinement, not-ready issues |
+| **Risky Entry Detection** | Identifies issues that pose delivery risk with reasons |
+| **Top Risks Aggregation** | Consolidated view of sprint-level risks |
+| **QA Focus Areas** | Prioritized areas requiring QA attention |
+| **Blocked Candidates** | Issues likely to block other work |
+| **Recommended Actions** | Actionable next steps for sprint success |
+| **Executive Summary** | One-paragraph sprint readiness assessment |
 
 ---
 
@@ -52,6 +72,7 @@ Studies show that **fixing a defect in production costs 100x more** than catchin
 | **Engineering Managers** | Improve backlog quality metrics |
 | **Scrum Masters** | Enhance refinement sessions with structured feedback |
 | **Release Managers** | Assess readiness risk before release commits |
+| **Agile Coaches** | Sprint-level health dashboards for retrospectives |
 
 ### AI-Assisted Backlog Governance
 
@@ -72,8 +93,10 @@ Integrate into your workflow to enforce quality gates:
 │  REST API (FastAPI)                                         │
 │  ├── /analyze                 Full readiness report         │
 │  ├── /analyze/acceptance-criteria   AC + test scenarios     │
+│  ├── /analyze/sprint          Sprint-level analysis         │
 │  ├── /analyze/duplicates      Duplicate detection           │
-│  └── /analyze/jira-comment    Formatted output              │
+│  ├── /analyze/jira-comment    Formatted output              │
+│  └── /format/confluence-sprint-page  Sprint dashboard       │
 ├─────────────────────────────────────────────────────────────┤
 │  Core Engine                                                │
 │  ├── Pydantic Schemas         Validated input/output        │
@@ -247,9 +270,156 @@ Generate acceptance criteria, edge cases, test scenarios, and automation candida
 }
 ```
 
+### POST /analyze/sprint
+
+Analyze all issues in a sprint and return sprint-level health metrics.
+
+Sprint analysis can be triggered by **Jira, GitLab, GitHub Projects, Azure DevOps, or any workflow automation tool** that can make HTTP requests. The endpoint accepts a list of issues and returns aggregated readiness and risk metrics.
+
+**Request:**
+```json
+{
+  "sprint_name": "Sprint 23",
+  "sprint_id": 23,
+  "domain_context": "control_panel",
+  "issues": [
+    {
+      "issue_key": "NG-101",
+      "title": "Add user role management",
+      "description": "As an admin, I want to assign roles to users so that I can control access permissions.",
+      "status": "To Do",
+      "priority": "High",
+      "labels": ["ready-for-sprint"]
+    },
+    {
+      "issue_key": "NG-102",
+      "title": "Implement audit logging",
+      "description": "Log all admin actions for compliance",
+      "status": "To Do",
+      "priority": "Medium",
+      "labels": ["needs-review"]
+    },
+    {
+      "issue_key": "NG-103",
+      "title": "Dashboard improvements",
+      "description": "",
+      "status": "To Do",
+      "priority": "Low",
+      "labels": ["needs-refinement"]
+    }
+  ]
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `sprint_name` | Yes | Sprint identifier |
+| `sprint_id` | No | Numeric sprint ID |
+| `domain_context` | No | Domain hint for specialized analysis |
+| `issues` | Yes | Array of issues (min 1) |
+| `issues[].issue_key` | Yes | Issue identifier |
+| `issues[].title` | Yes | Issue title/summary |
+| `issues[].description` | No | Issue description (supports ADF) |
+| `issues[].status` | No | Issue status |
+| `issues[].priority` | No | Issue priority |
+| `issues[].labels` | No | Labels (detects: ready-for-sprint, needs-review, needs-refinement) |
+
+**Response:**
+```json
+{
+  "sprint_name": "Sprint 23",
+  "sprint_health_score": 58,
+  "delivery_confidence": "Medium",
+  "total_issues": 3,
+  "ready_count": 1,
+  "needs_review_count": 1,
+  "needs_refinement_count": 1,
+  "not_ready_count": 0,
+  "risky_entries": [
+    {
+      "issue_key": "NG-103",
+      "title": "Dashboard improvements",
+      "reason": "Needs refinement but already in sprint",
+      "risk": "Medium"
+    }
+  ],
+  "top_risks": [
+    "Missing audit trail specifications",
+    "No error handling defined for role assignment"
+  ],
+  "qa_focus_areas": [
+    "Permission boundary testing",
+    "Audit log completeness verification"
+  ],
+  "blocked_candidates": [],
+  "recommended_actions": [
+    "Schedule refinement session for 1 issue(s) before sprint starts",
+    "Address 4 clarification questions across sprint issues"
+  ],
+  "executive_summary": "Sprint 'Sprint 23' has moderate delivery risk. 1 issue(s) still need refinement before development can begin safely. Health score: 58/100."
+}
+```
+
+**Label Detection:**
+
+The endpoint recognizes these labels to classify issues:
+- **Ready:** `ready-for-sprint`, `ready`, `sprint-ready`, `dev-ready`
+- **Needs Review:** `needs-review`, `review`, `needs-qa-review`
+- **Needs Refinement:** `needs-refinement`, `refinement`, `needs-grooming`, `backlog`
+
+Issues with `needs-refinement` labels in an active sprint are automatically flagged as risky.
+
+### POST /format/confluence-sprint-page
+
+Generate a Confluence page from sprint analysis results.
+
+**Request:**
+```json
+{
+  "sprint_analysis": {
+    "sprint_name": "Sprint 23",
+    "sprint_health_score": 58,
+    "delivery_confidence": "Medium",
+    "total_issues": 3,
+    "ready_count": 1,
+    "needs_review_count": 1,
+    "needs_refinement_count": 1,
+    "not_ready_count": 0,
+    "risky_entries": [...],
+    "top_risks": [...],
+    "qa_focus_areas": [...],
+    "blocked_candidates": [],
+    "recommended_actions": [...],
+    "executive_summary": "..."
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "page_title": "Sprint 23 Quality Dashboard",
+  "page_body_storage": "<h1>Sprint 23 Quality Dashboard</h1><h2>Executive Summary</h2><p>Sprint 'Sprint 23' has moderate delivery risk...</p>..."
+}
+```
+
+The `page_body_storage` contains Confluence storage-format HTML with these sections:
+1. Sprint Quality Dashboard title
+2. Executive Summary
+3. Sprint Health Score
+4. Delivery Confidence
+5. Readiness Distribution (table)
+6. Risky Sprint Entries (table)
+7. Top Risks (list)
+8. QA Focus Areas (list)
+9. Recommended Actions (list)
+10. Story Breakdown (summary table)
+
+Uses only safe HTML tags: `h1`, `h2`, `h3`, `p`, `ul`, `li`, `table`, `tr`, `th`, `td`, `strong`.
+
 ### POST /analyze/jira-comment
 
-Generate Atlassian wiki markup formatted for Jira comments.
+Generate plain-text comment formatted for Jira.
 
 **Request:**
 ```json
@@ -264,7 +434,7 @@ Generate Atlassian wiki markup formatted for Jira comments.
 ```json
 {
   "issue_key": "PROJ-123",
-  "jira_comment": "{panel:title=AI Requirement Readiness Analysis|borderColor=#orange}\n*Readiness Score:* 62/100\n*Recommendation:* ⚠️ HIGH RISK\n\n..."
+  "jira_comment": "AI Requirement Readiness Analysis — PROJ-123\n\nReadiness Score: 62/100\nRecommendation: Needs Review\n\n..."
 }
 ```
 
@@ -610,10 +780,12 @@ python -m pytest tests/test_acceptance_criteria.py -v
 - Schema validation
 - Scoring model
 - Recommendation thresholds
-- API endpoints
+- API endpoints (issue-level and sprint-level)
 - Domain context loading
 - Acceptance criteria generation
 - Duplicate detection
+- Sprint analysis and health scoring
+- Confluence page formatting
 
 ---
 
@@ -635,21 +807,24 @@ Requirements are scored 0-100 across seven dimensions:
 
 | Score | Recommendation | Action |
 |-------|----------------|--------|
-| 85-100 | ✅ **Ready** | Proceed to development |
-| 70-84 | 🟡 **Needs Review** | Minor clarifications needed |
-| 50-69 | 🟠 **High Risk** | Significant gaps to address |
-| 0-49 | 🔴 **Not Ready** | Major rework required |
+| 80-100 | ✅ **Ready** | Proceed to development |
+| 60-79 | 🟡 **Needs Review** | Minor clarifications needed |
+| 40-59 | 🟠 **Needs Refinement** | Significant gaps to address |
+| 0-39 | 🔴 **Not Ready** | Major rework required |
 
 ---
 
 ## Roadmap
+
+### Completed
+- [x] Sprint-level risk summary and health scoring
+- [x] Confluence sprint dashboard formatting
 
 ### In Progress
 - [ ] Duplicate requirement detection
 - [ ] Story clustering by theme
 
 ### Planned
-- [ ] Sprint-level risk summary
 - [ ] Release note generation from requirements
 - [ ] Traceability matrix generation
 - [ ] Test coverage gap analysis
