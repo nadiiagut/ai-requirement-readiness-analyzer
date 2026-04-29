@@ -302,6 +302,8 @@ class SprintIssue(BaseModel):
     status: Optional[str] = Field(default=None, description="Issue status (e.g., To Do, In Progress)")
     priority: Optional[str] = Field(default=None, description="Issue priority (e.g., High, Medium, Low)")
     labels: List[str] = Field(default_factory=list, description="Issue labels")
+    assignee: Optional[str] = Field(default=None, description="Assignee name")
+    issue_url: Optional[str] = Field(default=None, description="URL to the issue (for linking)")
 
     @field_validator('description', mode='before')
     @classmethod
@@ -325,12 +327,24 @@ class SprintAnalysisRequest(BaseModel):
     )
 
 
+class SprintScopeEntry(BaseModel):
+    """An issue entry for the Sprint Scope table."""
+    issue_key: str = Field(..., description="Issue key")
+    title: str = Field(..., description="Issue title")
+    assignee: Optional[str] = Field(default=None, description="Assignee name")
+    status: Optional[str] = Field(default=None, description="Issue status")
+    risk: str = Field(..., description="Risk level: Low, Medium, High")
+    reason: str = Field(..., description="Short stakeholder-friendly risk explanation")
+    notes: str = Field(..., description="Acceptance criteria / notes")
+    issue_url: Optional[str] = Field(default=None, description="URL to the issue")
+
+
 class RiskyEntry(BaseModel):
-    """A risky issue entry in the sprint."""
+    """A risky issue entry in the sprint (deprecated, use SprintScopeEntry)."""
     issue_key: str = Field(..., description="Issue key")
     title: str = Field(..., description="Issue title")
     reason: str = Field(..., description="Why this is risky")
-    risk: str = Field(..., description="Risk level: Low, Medium, High, Critical")
+    risk: str = Field(..., description="Risk level: Low, Medium, High")
 
 
 class SprintAnalysisResponse(BaseModel):
@@ -343,16 +357,21 @@ class SprintAnalysisResponse(BaseModel):
     sprint_health_score: int = Field(..., ge=0, le=100, description="Overall sprint health 0-100")
     delivery_confidence: str = Field(..., description="Delivery confidence: Low, Medium, High")
     total_issues: int = Field(..., description="Total number of issues in sprint")
+    high_risk_count: int = Field(default=0, description="Number of high risk items")
+    clarification_count: int = Field(default=0, description="Total items needing clarification")
     ready_count: int = Field(..., description="Issues ready for development")
     needs_review_count: int = Field(..., description="Issues needing review")
     needs_refinement_count: int = Field(..., description="Issues needing refinement")
     not_ready_count: int = Field(default=0, description="Issues not ready")
-    risky_entries: List[RiskyEntry] = Field(default_factory=list, description="Issues with elevated risk")
+    sprint_scope: List[SprintScopeEntry] = Field(default_factory=list, description="All issues in sprint with analysis")
+    risky_entries: List[RiskyEntry] = Field(default_factory=list, description="Issues with elevated risk (deprecated)")
     top_risks: List[str] = Field(default_factory=list, description="Top sprint-level risks")
     qa_focus_areas: List[str] = Field(default_factory=list, description="Areas QA should focus on")
     blocked_candidates: List[str] = Field(default_factory=list, description="Issues that may block others")
     recommended_actions: List[str] = Field(default_factory=list, description="Recommended actions for sprint success")
     executive_summary: str = Field(..., description="Executive summary of sprint readiness")
+    confluence_page_title: str = Field(..., description="Confluence page title for sprint dashboard")
+    confluence_page_body_storage: str = Field(..., description="Confluence storage-format HTML body")
 
 
 class ConfluenceSprintPageRequest(BaseModel):
@@ -992,49 +1011,41 @@ def _analyze_sprint_issue(
         }
 
 
-def _compute_sprint_health(
-    ready_count: int,
-    needs_review_count: int,
-    needs_refinement_count: int,
-    not_ready_count: int,
-    total_issues: int,
-    risky_count: int
-) -> int:
+def _compute_sprint_health_from_labels(issue_labels_list: list[list[str]]) -> int:
     """
-    Compute sprint health score (0-100).
+    Compute sprint health score (1-100) based on issue labels.
     
-    Factors:
-    - Ready issues boost score
-    - Needs refinement in sprint reduces score significantly
-    - Not ready issues reduce score heavily
-    - Risky entries reduce score
+    Label weights:
+    - ready-for-sprint / ready / sprint-ready / dev-ready: 90
+    - needs-review: 70
+    - needs-refinement / backlog: 45
+    - no relevant label: 65
+    
+    Returns average score clamped to 1-100.
+    If no issues, returns 0.
     """
-    if total_issues == 0:
+    if not issue_labels_list:
         return 0
     
-    # Base score from readiness distribution
-    ready_weight = 100
-    review_weight = 70
-    refinement_weight = 30
-    not_ready_weight = 0
+    scores = []
+    for labels in issue_labels_list:
+        labels_lower = [l.lower() for l in labels]
+        
+        # Check for ready labels
+        if any(l in labels_lower for l in ["ready-for-sprint", "ready", "sprint-ready", "dev-ready"]):
+            scores.append(90)
+        # Check for needs-review
+        elif any(l in labels_lower for l in ["needs-review", "review"]):
+            scores.append(70)
+        # Check for needs-refinement
+        elif any(l in labels_lower for l in ["needs-refinement", "backlog", "refinement"]):
+            scores.append(45)
+        # No relevant label
+        else:
+            scores.append(65)
     
-    weighted_sum = (
-        ready_count * ready_weight +
-        needs_review_count * review_weight +
-        needs_refinement_count * refinement_weight +
-        not_ready_count * not_ready_weight
-    )
-    base_score = weighted_sum / total_issues
-    
-    # Penalty for risky entries (up to 20 points)
-    risk_penalty = min(20, (risky_count / total_issues) * 30)
-    
-    # Penalty if majority needs refinement (up to 15 points)
-    refinement_ratio = (needs_refinement_count + not_ready_count) / total_issues
-    refinement_penalty = refinement_ratio * 15
-    
-    final_score = max(0, min(100, base_score - risk_penalty - refinement_penalty))
-    return int(final_score)
+    avg_score = sum(scores) / len(scores)
+    return max(1, min(100, int(avg_score)))
 
 
 def _compute_delivery_confidence(sprint_health: int, risky_ratio: float) -> str:
@@ -1046,6 +1057,42 @@ def _compute_delivery_confidence(sprint_health: int, risky_ratio: float) -> str:
     return "Low"
 
 
+def _generate_stakeholder_reason(readiness: str, risk_level: str, risks: list, clarification_count: int) -> str:
+    """Generate a short stakeholder-friendly reason for the risk assessment."""
+    if readiness == "needs_refinement":
+        return "Missing acceptance criteria"
+    elif readiness == "not_ready":
+        return "Not ready for development"
+    elif risk_level == "High":
+        if risks:
+            first_risk = risks[0].lower()
+            if "permission" in first_risk or "role" in first_risk or "auth" in first_risk:
+                return "Role permissions not defined"
+            elif "acceptance" in first_risk or "criteria" in first_risk:
+                return "Missing acceptance criteria"
+            elif "behavior" in first_risk or "success" in first_risk or "failure" in first_risk:
+                return "No clear success/failure behavior"
+        return "High risk identified"
+    elif clarification_count > 0:
+        return "Clarification questions pending"
+    return "No QA risk detected"
+
+
+def _generate_scope_notes(readiness: str, risk_level: str, clarification_count: int) -> str:
+    """Generate short acceptance criteria / notes for the Sprint Scope table."""
+    if readiness == "needs_refinement":
+        return "AC missing — requires refinement"
+    elif readiness == "not_ready":
+        return "Not ready — move to backlog or refine"
+    elif risk_level == "High":
+        return "Verify role permissions and audit behavior"
+    elif clarification_count > 0:
+        return f"Address {clarification_count} clarification question(s)"
+    elif readiness == "needs_review":
+        return "Ready for review before development"
+    return "Ready for QA test planning"
+
+
 def _generate_executive_summary(
     sprint_name: str,
     sprint_health: int,
@@ -1054,152 +1101,154 @@ def _generate_executive_summary(
     needs_refinement_count: int,
     not_ready_count: int,
     total_issues: int,
-    risky_count: int
+    high_risk_count: int
 ) -> str:
-    """Generate an executive summary for the sprint."""
-    ready_pct = int((ready_count / total_issues) * 100) if total_issues > 0 else 0
+    """Generate a short executive summary for the sprint."""
+    if total_issues == 0:
+        return f"{sprint_name} has no issues to analyze."
     
     if delivery_confidence == "High":
-        status = f"Sprint '{sprint_name}' is well-prepared for delivery."
-        detail = f"{ready_pct}% of issues ({ready_count}/{total_issues}) are ready for development."
+        return f"{sprint_name} is ready for delivery with {ready_count}/{total_issues} issues prepared. Health: {sprint_health}/100."
     elif delivery_confidence == "Medium":
-        status = f"Sprint '{sprint_name}' has moderate delivery risk."
         if needs_refinement_count > 0:
-            detail = f"{needs_refinement_count} issue(s) still need refinement before development can begin safely."
-        else:
-            detail = f"{risky_count} issue(s) have elevated risk that should be monitored."
+            return f"{sprint_name} has moderate risk. {needs_refinement_count} issue(s) need refinement. Health: {sprint_health}/100."
+        return f"{sprint_name} has moderate risk with {high_risk_count} item(s) requiring attention. Health: {sprint_health}/100."
     else:
-        status = f"Sprint '{sprint_name}' has significant delivery risk."
-        if not_ready_count > 0:
-            detail = f"{not_ready_count} issue(s) are not ready for sprint. Consider moving to backlog."
-        elif needs_refinement_count > 0:
-            detail = f"{needs_refinement_count} issue(s) need refinement. Sprint scope may need adjustment."
-        else:
-            detail = f"Multiple issues have elevated risk. Close monitoring recommended."
-    
-    return f"{status} {detail} Health score: {sprint_health}/100."
+        if high_risk_count > 0:
+            return f"{sprint_name} has elevated delivery risk. {high_risk_count} high-risk item(s) identified. Health: {sprint_health}/100."
+        return f"{sprint_name} requires attention before sprint commitment. Health: {sprint_health}/100."
 
 
-def _render_confluence_sprint_page(analysis: "SprintAnalysisResponse") -> dict:
+def _render_confluence_sprint_body(
+    sprint_name: str,
+    executive_summary: str,
+    sprint_health_score: int,
+    delivery_confidence: str,
+    total_issues: int,
+    high_risk_count: int,
+    clarification_count: int,
+    sprint_scope: list,
+    qa_focus_areas: list,
+    recommended_actions: list,
+) -> tuple[str, str]:
     """
     Render sprint analysis as Confluence storage-format HTML.
     
-    Uses only safe tags: h1, h2, h3, p, ul, li, table, tr, th, td, strong.
-    No markdown, no escaped newlines.
+    Returns (page_title, page_body_storage).
+    Uses only safe tags: h1, h2, p, table, tr, th, td, ul, li, strong, a.
+    No markdown, no escaped newlines, no leading "=".
+    
+    Sections:
+    1. H1: {Sprint Name} Dashboard
+    2. Executive Summary
+    3. Sprint Metrics table
+    4. Sprint Scope table
+    5. QA Focus Areas
+    6. Recommended Actions
     """
     parts = []
     
-    # 1. Sprint Quality Dashboard title
-    parts.append(f"<h1>{analysis.sprint_name} Quality Dashboard</h1>")
+    # Clean sprint name - remove any leading "=" that might exist
+    clean_sprint_name = sprint_name.lstrip("=").strip()
+    
+    # 1. Dashboard title (no "Quality", just "Dashboard")
+    parts.append(f"<h1>{clean_sprint_name} Dashboard</h1>")
     
     # 2. Executive Summary
     parts.append("<h2>Executive Summary</h2>")
-    parts.append(f"<p>{analysis.executive_summary}</p>")
+    parts.append(f"<p>{executive_summary}</p>")
     
-    # 3. Sprint Health Score
-    parts.append("<h2>Sprint Health Score</h2>")
-    health_color = "green" if analysis.sprint_health_score >= 75 else "orange" if analysis.sprint_health_score >= 50 else "red"
-    parts.append(f"<p><strong>Score:</strong> {analysis.sprint_health_score}/100</p>")
-    
-    # 4. Delivery Confidence
-    parts.append("<h2>Delivery Confidence</h2>")
-    confidence_color = "green" if analysis.delivery_confidence == "High" else "orange" if analysis.delivery_confidence == "Medium" else "red"
-    parts.append(f"<p><strong>{analysis.delivery_confidence}</strong></p>")
-    
-    # 5. Context Distribution
-    parts.append("<h2>Domain Context Distribution</h2>")
-    if analysis.context_distribution:
-        parts.append("<table>")
-        parts.append("<tr><th>Domain Context</th><th>Issues</th></tr>")
-        for context, count in sorted(analysis.context_distribution.items(), key=lambda x: -x[1]):
-            parts.append(f"<tr><td>{context}</td><td>{count}</td></tr>")
-        parts.append("</table>")
-    else:
-        parts.append("<p>No context distribution available.</p>")
-    
-    # 6. Readiness Distribution
-    parts.append("<h2>Readiness Distribution</h2>")
+    # 3. Sprint Metrics table (compact)
+    parts.append("<h2>Sprint Metrics</h2>")
     parts.append("<table>")
-    parts.append("<tr><th>Status</th><th>Count</th><th>Percentage</th></tr>")
-    total = analysis.total_issues
-    if total > 0:
-        ready_pct = int((analysis.ready_count / total) * 100)
-        review_pct = int((analysis.needs_review_count / total) * 100)
-        refinement_pct = int((analysis.needs_refinement_count / total) * 100)
-        not_ready_pct = int((analysis.not_ready_count / total) * 100)
-        parts.append(f"<tr><td>Ready</td><td>{analysis.ready_count}</td><td>{ready_pct}%</td></tr>")
-        parts.append(f"<tr><td>Needs Review</td><td>{analysis.needs_review_count}</td><td>{review_pct}%</td></tr>")
-        parts.append(f"<tr><td>Needs Refinement</td><td>{analysis.needs_refinement_count}</td><td>{refinement_pct}%</td></tr>")
-        parts.append(f"<tr><td>Not Ready</td><td>{analysis.not_ready_count}</td><td>{not_ready_pct}%</td></tr>")
-        parts.append(f"<tr><td><strong>Total</strong></td><td><strong>{total}</strong></td><td><strong>100%</strong></td></tr>")
+    parts.append("<tr><th>Metric</th><th>Value</th></tr>")
+    parts.append(f"<tr><td>Sprint Health Score</td><td>{sprint_health_score}/100</td></tr>")
+    parts.append(f"<tr><td>Delivery Confidence</td><td>{delivery_confidence}</td></tr>")
+    parts.append(f"<tr><td>Total Issues</td><td>{total_issues}</td></tr>")
+    parts.append(f"<tr><td>High Risk Items</td><td>{high_risk_count}</td></tr>")
+    parts.append(f"<tr><td>Items Needing Clarification</td><td>{clarification_count}</td></tr>")
     parts.append("</table>")
     
-    # 6. Risky Sprint Entries
-    parts.append("<h2>Risky Sprint Entries</h2>")
-    if analysis.risky_entries:
+    # 4. Sprint Scope table
+    parts.append("<h2>Sprint Scope</h2>")
+    if sprint_scope:
         parts.append("<table>")
-        parts.append("<tr><th>Issue</th><th>Title</th><th>Risk</th><th>Reason</th></tr>")
-        for entry in analysis.risky_entries:
-            parts.append(f"<tr><td>{entry.issue_key}</td><td>{entry.title}</td><td>{entry.risk}</td><td>{entry.reason}</td></tr>")
+        parts.append("<tr><th>Issue</th><th>Title</th><th>Assignee</th><th>Status</th><th>Risk</th><th>Reason</th><th>Acceptance Criteria / Notes</th></tr>")
+        for entry in sprint_scope:
+            # Handle both dict and SprintScopeEntry objects
+            if hasattr(entry, 'issue_key'):
+                issue_key = entry.issue_key
+                title = entry.title
+                assignee = entry.assignee or "-"
+                status = entry.status or "-"
+                risk = entry.risk
+                reason = entry.reason
+                notes = entry.notes
+                issue_url = entry.issue_url
+            else:
+                issue_key = entry.get('issue_key', '')
+                title = entry.get('title', '')
+                assignee = entry.get('assignee') or "-"
+                status = entry.get('status') or "-"
+                risk = entry.get('risk', 'Medium')
+                reason = entry.get('reason', '')
+                notes = entry.get('notes', '')
+                issue_url = entry.get('issue_url')
+            
+            # Render issue as link if URL provided
+            if issue_url:
+                issue_cell = f'<a href="{issue_url}">{issue_key}</a>'
+            else:
+                issue_cell = issue_key
+            
+            parts.append(f"<tr><td>{issue_cell}</td><td>{title}</td><td>{assignee}</td><td>{status}</td><td>{risk}</td><td>{reason}</td><td>{notes}</td></tr>")
         parts.append("</table>")
     else:
-        parts.append("<p>No risky entries identified.</p>")
+        parts.append("<p>No issues in sprint scope.</p>")
     
-    # 7. Top Risks
-    parts.append("<h2>Top Risks</h2>")
-    if analysis.top_risks:
-        parts.append("<ul>")
-        for risk in analysis.top_risks:
-            parts.append(f"<li>{risk}</li>")
-        parts.append("</ul>")
-    else:
-        parts.append("<p>No significant risks identified.</p>")
-    
-    # 8. QA Focus Areas
+    # 5. QA Focus Areas
     parts.append("<h2>QA Focus Areas</h2>")
-    if analysis.qa_focus_areas:
+    if qa_focus_areas:
         parts.append("<ul>")
-        for area in analysis.qa_focus_areas:
+        for area in qa_focus_areas:
             parts.append(f"<li>{area}</li>")
         parts.append("</ul>")
     else:
         parts.append("<p>No specific QA focus areas identified.</p>")
     
-    # 9. Recommended Actions
+    # 6. Recommended Actions
     parts.append("<h2>Recommended Actions</h2>")
-    if analysis.recommended_actions:
+    if recommended_actions:
         parts.append("<ul>")
-        for action in analysis.recommended_actions:
+        for action in recommended_actions:
             parts.append(f"<li>{action}</li>")
         parts.append("</ul>")
     else:
         parts.append("<p>No specific actions recommended.</p>")
     
-    # 10. Story Breakdown
-    parts.append("<h2>Story Breakdown</h2>")
-    parts.append("<h3>Summary</h3>")
-    parts.append("<table>")
-    parts.append("<tr><th>Metric</th><th>Value</th></tr>")
-    parts.append(f"<tr><td>Total Issues</td><td>{analysis.total_issues}</td></tr>")
-    parts.append(f"<tr><td>Ready for Development</td><td>{analysis.ready_count}</td></tr>")
-    parts.append(f"<tr><td>Needs Review</td><td>{analysis.needs_review_count}</td></tr>")
-    parts.append(f"<tr><td>Needs Refinement</td><td>{analysis.needs_refinement_count}</td></tr>")
-    parts.append(f"<tr><td>Not Ready</td><td>{analysis.not_ready_count}</td></tr>")
-    parts.append(f"<tr><td>Risky Entries</td><td>{len(analysis.risky_entries)}</td></tr>")
-    if analysis.blocked_candidates:
-        parts.append(f"<tr><td>Potential Blockers</td><td>{len(analysis.blocked_candidates)}</td></tr>")
-    parts.append("</table>")
-    
-    if analysis.blocked_candidates:
-        parts.append("<h3>Potential Blockers</h3>")
-        parts.append("<ul>")
-        for blocker in analysis.blocked_candidates:
-            parts.append(f"<li>{blocker}</li>")
-        parts.append("</ul>")
-    
     page_body = "".join(parts)
-    page_title = f"{analysis.sprint_name} Quality Dashboard"
+    page_title = f"{clean_sprint_name} Dashboard"
     
+    return (page_title, page_body)
+
+
+def _render_confluence_sprint_page(analysis: "SprintAnalysisResponse") -> dict:
+    """
+    Render sprint analysis as Confluence storage-format HTML.
+    Wrapper for _render_confluence_sprint_body that accepts SprintAnalysisResponse.
+    """
+    page_title, page_body = _render_confluence_sprint_body(
+        sprint_name=analysis.sprint_name,
+        executive_summary=analysis.executive_summary,
+        sprint_health_score=analysis.sprint_health_score,
+        delivery_confidence=analysis.delivery_confidence,
+        total_issues=analysis.total_issues,
+        high_risk_count=analysis.high_risk_count,
+        clarification_count=analysis.clarification_count,
+        sprint_scope=analysis.sprint_scope,
+        qa_focus_areas=analysis.qa_focus_areas,
+        recommended_actions=analysis.recommended_actions,
+    )
     return {
         "page_title": page_title,
         "page_body_storage": page_body
@@ -1498,23 +1547,58 @@ async def analyze_sprint(
     needs_refinement_count = sum(1 for r in issue_results if r["readiness"] == "needs_refinement")
     not_ready_count = sum(1 for r in issue_results if r["readiness"] == "not_ready")
     
-    # Collect risky entries
+    # Compute sprint health using label-based formula
+    issue_labels_list = [issue.labels for issue in request.issues]
+    sprint_health = _compute_sprint_health_from_labels(issue_labels_list)
+    
+    # Build sprint scope entries for ALL issues
+    sprint_scope = []
+    for i, r in enumerate(issue_results):
+        issue = request.issues[i]
+        risk_level = r["risk_level"]
+        # Normalize risk to Low/Medium/High
+        if risk_level in ["Critical", "High"]:
+            normalized_risk = "High"
+        elif risk_level == "Medium":
+            normalized_risk = "Medium"
+        else:
+            normalized_risk = "Low"
+        
+        reason = _generate_stakeholder_reason(
+            r["readiness"], risk_level, r["risks"], r["clarification_count"]
+        )
+        notes = _generate_scope_notes(
+            r["readiness"], risk_level, r["clarification_count"]
+        )
+        
+        sprint_scope.append(SprintScopeEntry(
+            issue_key=issue.issue_key,
+            title=issue.title,
+            assignee=issue.assignee,
+            status=issue.status,
+            risk=normalized_risk,
+            reason=reason,
+            notes=notes,
+            issue_url=issue.issue_url
+        ))
+    
+    # Count high risk items
+    high_risk_count = sum(1 for entry in sprint_scope if entry.risk == "High")
+    
+    # Total clarification count
+    total_clarifications = sum(r["clarification_count"] for r in issue_results)
+    
+    # Collect risky entries (deprecated, kept for backward compatibility)
     risky_entries = [
         RiskyEntry(
             issue_key=r["issue_key"],
             title=r["title"],
-            reason=r["reason"],
+            reason=r["reason"] if r["reason"] else "Elevated risk",
             risk=r["risk_level"]
         )
         for r in issue_results if r["is_risky"]
     ]
     risky_count = len(risky_entries)
-    
-    # Compute sprint health
-    sprint_health = _compute_sprint_health(
-        ready_count, needs_review_count, needs_refinement_count,
-        not_ready_count, total_issues, risky_count
-    )
     
     # Compute delivery confidence
     risky_ratio = risky_count / total_issues if total_issues > 0 else 0
@@ -1583,7 +1667,21 @@ async def analyze_sprint(
     executive_summary = _generate_executive_summary(
         request.sprint_name, sprint_health, delivery_confidence,
         ready_count, needs_refinement_count, not_ready_count,
-        total_issues, risky_count
+        total_issues, high_risk_count
+    )
+    
+    # Generate Confluence page (included inline to avoid separate API call)
+    confluence_page_title, confluence_page_body_storage = _render_confluence_sprint_body(
+        sprint_name=request.sprint_name,
+        executive_summary=executive_summary,
+        sprint_health_score=sprint_health,
+        delivery_confidence=delivery_confidence,
+        total_issues=total_issues,
+        high_risk_count=high_risk_count,
+        clarification_count=total_clarifications,
+        sprint_scope=sprint_scope,
+        qa_focus_areas=qa_focus_areas,
+        recommended_actions=recommended_actions,
     )
     
     return SprintAnalysisResponse(
@@ -1592,16 +1690,21 @@ async def analyze_sprint(
         sprint_health_score=sprint_health,
         delivery_confidence=delivery_confidence,
         total_issues=total_issues,
+        high_risk_count=high_risk_count,
+        clarification_count=total_clarifications,
         ready_count=ready_count,
         needs_review_count=needs_review_count,
         needs_refinement_count=needs_refinement_count,
         not_ready_count=not_ready_count,
+        sprint_scope=sprint_scope,
         risky_entries=risky_entries,
         top_risks=top_risks,
         qa_focus_areas=qa_focus_areas,
         blocked_candidates=blocked_candidates,
         recommended_actions=recommended_actions,
-        executive_summary=executive_summary
+        executive_summary=executive_summary,
+        confluence_page_title=confluence_page_title,
+        confluence_page_body_storage=confluence_page_body_storage
     )
 
 

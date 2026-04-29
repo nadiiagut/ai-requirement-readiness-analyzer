@@ -6,12 +6,13 @@ from fastapi.testclient import TestClient
 from src.api import (
     app,
     _classify_issue_by_labels,
-    _compute_sprint_health,
+    _compute_sprint_health_from_labels,
     _compute_delivery_confidence,
     _generate_executive_summary,
     SprintIssue,
     SprintAnalysisRequest,
     SprintAnalysisResponse,
+    SprintScopeEntry,
     RiskyEntry,
 )
 
@@ -61,77 +62,75 @@ class TestClassifyIssueByLabels:
         assert _classify_issue_by_labels(["ready for sprint"]) == "ready"
 
 
-class TestComputeSprintHealth:
-    """Tests for sprint health score computation."""
+class TestComputeSprintHealthFromLabels:
+    """Tests for label-based sprint health score computation."""
     
     def test_all_ready_issues(self):
-        """All ready issues should give high health score."""
-        score = _compute_sprint_health(
-            ready_count=5,
-            needs_review_count=0,
-            needs_refinement_count=0,
-            not_ready_count=0,
-            total_issues=5,
-            risky_count=0
-        )
-        assert score >= 90
+        """All ready-for-sprint labels should give score of 90."""
+        labels_list = [
+            ["ready-for-sprint"],
+            ["ready-for-sprint"],
+            ["ready-for-sprint"],
+        ]
+        score = _compute_sprint_health_from_labels(labels_list)
+        assert score == 90
     
     def test_all_needs_refinement(self):
-        """All needs-refinement issues should give low health score."""
-        score = _compute_sprint_health(
-            ready_count=0,
-            needs_review_count=0,
-            needs_refinement_count=5,
-            not_ready_count=0,
-            total_issues=5,
-            risky_count=5
-        )
-        assert score < 30
+        """All needs-refinement labels should give score of 45."""
+        labels_list = [
+            ["needs-refinement"],
+            ["needs-refinement"],
+            ["needs-refinement"],
+        ]
+        score = _compute_sprint_health_from_labels(labels_list)
+        assert score == 45
     
-    def test_mixed_readiness(self):
-        """Mixed readiness should give moderate score."""
-        score = _compute_sprint_health(
-            ready_count=3,
-            needs_review_count=1,
-            needs_refinement_count=1,
-            not_ready_count=0,
-            total_issues=5,
-            risky_count=1
-        )
-        assert 50 <= score <= 85
+    def test_all_needs_review(self):
+        """All needs-review labels should give score of 70."""
+        labels_list = [
+            ["needs-review"],
+            ["needs-review"],
+        ]
+        score = _compute_sprint_health_from_labels(labels_list)
+        assert score == 70
     
-    def test_risky_entries_reduce_score(self):
-        """Risky entries should reduce health score."""
-        score_no_risk = _compute_sprint_health(
-            ready_count=5,
-            needs_review_count=0,
-            needs_refinement_count=0,
-            not_ready_count=0,
-            total_issues=5,
-            risky_count=0
-        )
-        score_with_risk = _compute_sprint_health(
-            ready_count=5,
-            needs_review_count=0,
-            needs_refinement_count=0,
-            not_ready_count=0,
-            total_issues=5,
-            risky_count=3
-        )
-        assert score_with_risk < score_no_risk
+    def test_no_labels_gives_65(self):
+        """Issues with no relevant labels should give score of 65."""
+        labels_list = [
+            ["bug", "frontend"],
+            ["backend"],
+            [],
+        ]
+        score = _compute_sprint_health_from_labels(labels_list)
+        assert score == 65
     
-    def test_empty_sprint(self):
+    def test_mixed_labels(self):
+        """Mixed labels should give weighted average."""
+        labels_list = [
+            ["ready-for-sprint"],  # 90
+            ["needs-review"],      # 70
+            ["needs-refinement"],  # 45
+        ]
+        score = _compute_sprint_health_from_labels(labels_list)
+        # Average: (90 + 70 + 45) / 3 = 68.33 -> 68
+        assert score == 68
+    
+    def test_empty_list_returns_0(self):
         """Empty sprint should return 0."""
-        score = _compute_sprint_health(0, 0, 0, 0, 0, 0)
+        score = _compute_sprint_health_from_labels([])
         assert score == 0
     
-    def test_score_bounds(self):
-        """Score should always be between 0 and 100."""
-        score = _compute_sprint_health(10, 0, 0, 0, 10, 0)
-        assert 0 <= score <= 100
-        
-        score = _compute_sprint_health(0, 0, 10, 10, 20, 20)
-        assert 0 <= score <= 100
+    def test_score_clamped_to_1_minimum(self):
+        """Score should be at least 1 if there are issues."""
+        labels_list = [["needs-refinement"]]
+        score = _compute_sprint_health_from_labels(labels_list)
+        assert score >= 1
+    
+    def test_score_clamped_to_100_maximum(self):
+        """Score should never exceed 100."""
+        labels_list = [["ready-for-sprint"] for _ in range(10)]
+        score = _compute_sprint_health_from_labels(labels_list)
+        assert score <= 100
 
 
 class TestComputeDeliveryConfidence:
@@ -176,11 +175,11 @@ class TestGenerateExecutiveSummary:
             needs_refinement_count=0,
             not_ready_count=0,
             total_issues=10,
-            risky_count=1
+            high_risk_count=1
         )
         assert "Sprint 1" in summary
-        assert "well-prepared" in summary
-        assert "80%" in summary  # 8/10 = 80%
+        assert "ready for delivery" in summary
+        assert "8/10" in summary
     
     def test_medium_confidence_summary(self):
         summary = _generate_executive_summary(
@@ -191,10 +190,10 @@ class TestGenerateExecutiveSummary:
             needs_refinement_count=2,
             not_ready_count=0,
             total_issues=10,
-            risky_count=3
+            high_risk_count=3
         )
         assert "Sprint 2" in summary
-        assert "moderate" in summary
+        assert "moderate risk" in summary
     
     def test_low_confidence_summary(self):
         summary = _generate_executive_summary(
@@ -205,10 +204,10 @@ class TestGenerateExecutiveSummary:
             needs_refinement_count=5,
             not_ready_count=3,
             total_issues=10,
-            risky_count=8
+            high_risk_count=8
         )
         assert "Sprint 3" in summary
-        assert "significant" in summary
+        assert "risk" in summary.lower()
     
     def test_summary_includes_health_score(self):
         summary = _generate_executive_summary(
@@ -350,7 +349,9 @@ class TestSprintAnalysisEndpoint:
             "qa_focus_areas",
             "blocked_candidates",
             "recommended_actions",
-            "executive_summary"
+            "executive_summary",
+            "confluence_page_title",
+            "confluence_page_body_storage"
         ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
@@ -484,3 +485,162 @@ class TestSprintAnalysisRequest:
         assert request.sprint_id == 42
         assert request.domain_context == "control_panel"
         assert len(request.issues) == 2
+
+
+class TestSprintAnalysisConfluenceOutput:
+    """Tests for inline Confluence output in sprint analysis."""
+    
+    def test_confluence_page_title_format(self):
+        """Test that confluence_page_title has no leading '=' and uses short format."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "NG Sprint 1",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Test issue", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Title should be "{Sprint Name} Dashboard" with no leading "="
+        assert data["confluence_page_title"] == "NG Sprint 1 Dashboard"
+        assert not data["confluence_page_title"].startswith("=")
+    
+    def test_confluence_body_is_html(self):
+        """Test that confluence_page_body_storage is valid HTML with new sections."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "HTML Test Sprint",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Test issue", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        body = data["confluence_page_body_storage"]
+        
+        # Should start with h1 title (no "Quality" in title)
+        assert body.startswith("<h1>HTML Test Sprint Dashboard</h1>")
+        # Should contain new compact sections
+        assert "<h2>Executive Summary</h2>" in body
+        assert "<h2>Sprint Metrics</h2>" in body
+        assert "<h2>Sprint Scope</h2>" in body
+        # Should NOT contain removed sections
+        assert "Readiness Distribution" not in body
+        assert "Story Breakdown" not in body
+    
+    def test_confluence_body_no_markdown(self):
+        """Test that confluence body contains no markdown syntax."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Markdown Test",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Test", "labels": ["needs-refinement"]}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        
+        # No markdown table syntax
+        assert "|---" not in body
+        # No markdown headers
+        assert "\n# " not in body
+        assert "\n## " not in body
+        # No markdown lists
+        assert "\n- " not in body
+        assert "\n* " not in body
+        # No leading "=" anywhere
+        assert not body.startswith("=")
+    
+    def test_confluence_body_uses_safe_tags_only(self):
+        """Test that confluence body uses only safe HTML tags."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Safe Tags Sprint",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Test", "labels": [], "issue_url": "https://example.com/T-1"}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        
+        import re
+        # Extract all HTML tags
+        tags = re.findall(r'</?(\w+)', body)
+        # Safe tags include 'a' for issue links
+        safe_tags = {"h1", "h2", "p", "ul", "li", "table", "tr", "th", "td", "strong", "a"}
+        for tag in tags:
+            assert tag in safe_tags, f"Unsafe tag found: {tag}"
+    
+    def test_confluence_body_includes_sprint_scope(self):
+        """Test that Sprint Scope table appears with issue data."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Scope Sprint",
+                "issues": [
+                    {
+                        "issue_key": "SCOPE-1",
+                        "title": "Feature with scope",
+                        "description": "",
+                        "labels": ["needs-refinement"],
+                        "status": "To Do",
+                        "assignee": "John Doe"
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        
+        # Sprint Scope section should exist (not "Risky Sprint Entries")
+        assert "<h2>Sprint Scope</h2>" in body
+        # Issue key should appear in scope table
+        assert "SCOPE-1" in body
+        # Status column should exist
+        assert "Status" in body
+    
+    def test_confluence_body_issue_links(self):
+        """Test that issue links are rendered when issue_url is provided."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Link Test",
+                "issues": [
+                    {
+                        "issue_key": "NG-7",
+                        "title": "Test with link",
+                        "labels": [],
+                        "issue_url": "https://nadingut.atlassian.net/browse/NG-7"
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        
+        # Issue should be rendered as a link
+        assert '<a href="https://nadingut.atlassian.net/browse/NG-7">NG-7</a>' in body
+    
+    def test_health_score_not_zero_with_issues(self):
+        """Test that health score is not 0 when issues exist."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Health Test",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Test", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Health score should be at least 1 when issues exist
+        assert data["sprint_health_score"] >= 1

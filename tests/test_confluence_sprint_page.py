@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from src.api import (
     app,
     _render_confluence_sprint_page,
+    _render_confluence_sprint_body,
     SprintAnalysisResponse,
     RiskyEntry,
     ConfluenceSprintPageRequest,
@@ -48,6 +49,26 @@ def _sample_sprint_analysis(
     if executive_summary is None:
         executive_summary = f"Sprint '{sprint_name}' has moderate delivery risk. Health score: {sprint_health_score}/100."
     
+    # Generate confluence page
+    risky_entry_objs = [RiskyEntry(**r) if isinstance(r, dict) else r for r in risky_entries]
+    confluence_page_title, confluence_page_body_storage = _render_confluence_sprint_body(
+        sprint_name=sprint_name,
+        executive_summary=executive_summary,
+        sprint_health_score=sprint_health_score,
+        delivery_confidence=delivery_confidence,
+        context_distribution=context_distribution,
+        total_issues=total_issues,
+        ready_count=ready_count,
+        needs_review_count=needs_review_count,
+        needs_refinement_count=needs_refinement_count,
+        not_ready_count=not_ready_count,
+        risky_entries=risky_entry_objs,
+        top_risks=top_risks,
+        qa_focus_areas=qa_focus_areas,
+        recommended_actions=recommended_actions,
+        blocked_candidates=blocked_candidates,
+    )
+    
     return SprintAnalysisResponse(
         sprint_name=sprint_name,
         context_distribution=context_distribution,
@@ -58,12 +79,14 @@ def _sample_sprint_analysis(
         needs_review_count=needs_review_count,
         needs_refinement_count=needs_refinement_count,
         not_ready_count=not_ready_count,
-        risky_entries=[RiskyEntry(**r) if isinstance(r, dict) else r for r in risky_entries],
+        risky_entries=risky_entry_objs,
         top_risks=top_risks,
         qa_focus_areas=qa_focus_areas,
         blocked_candidates=blocked_candidates,
         recommended_actions=recommended_actions,
-        executive_summary=executive_summary
+        executive_summary=executive_summary,
+        confluence_page_title=confluence_page_title,
+        confluence_page_body_storage=confluence_page_body_storage
     )
 
 
@@ -312,7 +335,9 @@ class TestConfluenceSprintPageEndpoint:
                     "qa_focus_areas": [],
                     "blocked_candidates": [],
                     "recommended_actions": ["Monitor progress"],
-                    "executive_summary": "Sprint is on track."
+                    "executive_summary": "Sprint is on track.",
+                    "confluence_page_title": "Sprint 1 Quality Dashboard",
+                    "confluence_page_body_storage": "<h1>Sprint 1 Quality Dashboard</h1>"
                 }
             }
         )
@@ -338,7 +363,9 @@ class TestConfluenceSprintPageEndpoint:
                     "qa_focus_areas": [],
                     "blocked_candidates": [],
                     "recommended_actions": [],
-                    "executive_summary": "Well prepared."
+                    "executive_summary": "Well prepared.",
+                    "confluence_page_title": "My Sprint Quality Dashboard",
+                    "confluence_page_body_storage": "<h1>My Sprint Quality Dashboard</h1>"
                 }
             }
         )
@@ -367,7 +394,9 @@ class TestConfluenceSprintPageEndpoint:
                     "qa_focus_areas": [],
                     "blocked_candidates": [],
                     "recommended_actions": [],
-                    "executive_summary": "Moderate risk."
+                    "executive_summary": "Moderate risk.",
+                    "confluence_page_title": "Test Sprint Quality Dashboard",
+                    "confluence_page_body_storage": "<h1>Test Sprint Quality Dashboard</h1>"
                 }
             }
         )
@@ -403,7 +432,9 @@ class TestConfluenceSprintPageEndpoint:
                     "qa_focus_areas": ["Integration testing"],
                     "blocked_candidates": [],
                     "recommended_actions": ["Schedule refinement"],
-                    "executive_summary": "High risk sprint."
+                    "executive_summary": "High risk sprint.",
+                    "confluence_page_title": "Risky Sprint Quality Dashboard",
+                    "confluence_page_body_storage": "<h1>Risky Sprint Quality Dashboard</h1>"
                 }
             }
         )
@@ -449,7 +480,9 @@ class TestConfluenceSprintPageEndpoint:
                     "qa_focus_areas": ["Area 1"],
                     "blocked_candidates": ["Blocker 1"],
                     "recommended_actions": ["Action 1"],
-                    "executive_summary": "Summary here."
+                    "executive_summary": "Summary here.",
+                    "confluence_page_title": "Full Sprint Quality Dashboard",
+                    "confluence_page_body_storage": "<h1>Full Sprint Quality Dashboard</h1>"
                 }
             }
         )
