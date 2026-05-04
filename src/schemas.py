@@ -3,37 +3,6 @@ from typing import ClassVar, Dict, List, Optional
 from enum import Enum
 
 
-class ReadinessScore(str, Enum):
-    READY = "ready"
-    MOSTLY_READY = "mostly_ready"
-    PARTIALLY_READY = "partially_ready"
-    NOT_READY = "not_ready"
-
-
-class Issue(BaseModel):
-    category: str = Field(description="Category of the issue (e.g., clarity, completeness, testability)")
-    severity: str = Field(description="Severity level (low, medium, high, critical)")
-    description: str = Field(description="Description of the issue")
-    suggestion: str = Field(description="Suggested fix or improvement")
-
-
-class Strength(BaseModel):
-    category: str = Field(description="Category of the strength")
-    description: str = Field(description="Description of what makes this requirement strong")
-
-
-class RequirementAnalysis(BaseModel):
-    requirement_summary: str = Field(description="Brief summary of the requirement")
-    readiness_score: ReadinessScore = Field(description="Overall readiness assessment")
-    confidence_score: float = Field(description="Confidence in the analysis (0.0-1.0)")
-    strengths: List[Strength] = Field(description="What makes this requirement well-written")
-    issues: List[Issue] = Field(description="Issues that need to be addressed")
-    acceptance_criteria_assessment: str = Field(description="Assessment of acceptance criteria quality")
-    testability_assessment: str = Field(description="Assessment of how testable the requirement is")
-    next_steps: List[str] = Field(description="Recommended next steps for the PM/team")
-    estimated_implementation_complexity: str = Field(description="Estimated complexity (low, medium, high)")
-
-
 class RequirementReadinessRecommendation(str, Enum):
     READY = "ready"
     NEEDS_REVIEW = "needs_review"

@@ -347,6 +347,15 @@ class RiskyEntry(BaseModel):
     risk: str = Field(..., description="Risk level: Low, Medium, High")
 
 
+class DecisionEntry(BaseModel):
+    """An item requiring a stakeholder or PM decision."""
+    issue_key: str = Field(..., description="Issue key")
+    issue_url: str = Field(..., description="Full URL to the issue")
+    title: str = Field(..., description="Issue title")
+    decision_needed: str = Field(..., description="Short decision description")
+    why_it_matters: str = Field(..., description="Stakeholder-friendly explanation")
+
+
 class SprintAnalysisResponse(BaseModel):
     """Response body for /analyze/sprint endpoint."""
     sprint_name: str = Field(..., description="Sprint name")
@@ -369,6 +378,7 @@ class SprintAnalysisResponse(BaseModel):
     qa_focus_areas: List[str] = Field(default_factory=list, description="Areas QA should focus on")
     blocked_candidates: List[str] = Field(default_factory=list, description="Issues that may block others")
     recommended_actions: List[str] = Field(default_factory=list, description="Recommended actions for sprint success")
+    decisions_needed: List[DecisionEntry] = Field(default_factory=list, description="Items requiring stakeholder or PM decisions")
     executive_summary: str = Field(..., description="Executive summary of sprint readiness")
     confluence_page_title: str = Field(..., description="Confluence page title for sprint dashboard")
     confluence_page_body_storage: str = Field(..., description="Confluence storage-format HTML body")
@@ -1093,30 +1103,139 @@ def _generate_scope_notes(readiness: str, risk_level: str, clarification_count: 
     return "Ready for QA test planning"
 
 
+_THEME_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("access control", ["access", "permission", "role", "rbac", "acl"]),
+    ("user management", ["user", "account", "profile", "register", "onboard"]),
+    ("authentication", ["auth", "login", "sso", "2fa", "password", "session"]),
+    ("dashboard and reporting", ["dashboard", "report", "analytics", "metric", "chart"]),
+    ("billing and payments", ["billing", "payment", "invoice", "subscription", "charge"]),
+    ("notifications", ["notification", "email", "alert", "webhook", "alert"]),
+    ("API and integrations", ["api", "integration", "webhook", "sync", "import", "export"]),
+    ("configuration and admin", ["config", "setting", "setup", "admin", "control panel", "operational"]),
+]
+
+
+def _infer_sprint_themes(issue_titles: list) -> list:
+    """Infer up to 3 product/feature themes from issue titles."""
+    text = " ".join(issue_titles).lower()
+    found = []
+    for theme, keywords in _THEME_KEYWORDS:
+        if any(kw in text for kw in keywords):
+            found.append(theme)
+        if len(found) == 3:
+            break
+    return found
+
+
 def _generate_executive_summary(
     sprint_name: str,
     sprint_health: int,
     delivery_confidence: str,
-    ready_count: int,
-    needs_refinement_count: int,
-    not_ready_count: int,
     total_issues: int,
-    high_risk_count: int
+    high_risk_count: int,
+    needs_refinement_count: int,
+    issue_titles: Optional[list] = None,
 ) -> str:
-    """Generate a short executive summary for the sprint."""
+    """Generate a stakeholder-facing delivery summary for the sprint."""
     if total_issues == 0:
         return f"{sprint_name} has no issues to analyze."
-    
-    if delivery_confidence == "High":
-        return f"{sprint_name} is ready for delivery with {ready_count}/{total_issues} issues prepared. Health: {sprint_health}/100."
-    elif delivery_confidence == "Medium":
-        if needs_refinement_count > 0:
-            return f"{sprint_name} has moderate risk. {needs_refinement_count} issue(s) need refinement. Health: {sprint_health}/100."
-        return f"{sprint_name} has moderate risk with {high_risk_count} item(s) requiring attention. Health: {sprint_health}/100."
-    else:
-        if high_risk_count > 0:
-            return f"{sprint_name} has elevated delivery risk. {high_risk_count} high-risk item(s) identified. Health: {sprint_health}/100."
-        return f"{sprint_name} requires attention before sprint commitment. Health: {sprint_health}/100."
+
+    themes = _infer_sprint_themes(issue_titles or [])
+    theme_text = " and ".join(themes) if themes else "various improvements"
+
+    confidence_phrase = delivery_confidence.lower()
+    risk_note = ""
+    if needs_refinement_count > 0:
+        risk_note = f" due to unresolved acceptance criteria on {needs_refinement_count} {'story' if needs_refinement_count == 1 else 'stories'}"
+    elif high_risk_count > 0:
+        risk_note = f" due to {high_risk_count} high-risk item{'s' if high_risk_count > 1 else ''} requiring attention"
+
+    return (
+        f"This sprint focuses on {theme_text}. "
+        f"Delivery confidence is {confidence_phrase}{risk_note}. "
+        f"Health: {sprint_health}/100."
+    )
+
+
+_JIRA_BASE_URL = "https://nadingut.atlassian.net/browse"
+
+
+def _build_decisions_needed(sprint_scope: list, issues: list) -> list:
+    """
+    Build DecisionEntry objects for issues requiring stakeholder decisions.
+
+    Triggers: risk == High, needs-refinement notes, unclear/missing requirements,
+              status Blocked, or reason mentions missing/undefined.
+    """
+    decisions = []
+    for entry in sprint_scope:
+        if hasattr(entry, 'issue_key'):
+            issue_key = entry.issue_key
+            title = entry.title
+            risk = entry.risk
+            reason = entry.reason
+            notes = entry.notes
+            status = (entry.status or "").strip()
+            issue_url = entry.issue_url
+        else:
+            issue_key = entry.get('issue_key', '')
+            title = entry.get('title', '')
+            risk = entry.get('risk', 'Low')
+            reason = entry.get('reason', '')
+            notes = entry.get('notes', '')
+            status = (entry.get('status') or '').strip()
+            issue_url = entry.get('issue_url')
+
+        reason_lower = reason.lower()
+        notes_lower = notes.lower()
+        is_decision = (
+            risk == "High"
+            or "missing acceptance criteria" in reason_lower
+            or "not defined" in reason_lower
+            or "ac missing" in notes_lower
+            or "requires refinement" in notes_lower
+            or status.lower() in ("blocked", "flagged")
+        )
+        if not is_decision:
+            continue
+
+        # Decision description
+        if "missing acceptance criteria" in reason_lower or "ac missing" in notes_lower:
+            decision = "Approve scope or define acceptance criteria"
+            why = "This item cannot be built without clear acceptance criteria."
+        elif "not defined" in reason_lower or "permissions" in reason_lower:
+            decision = "Define role and permission boundaries"
+            why = "Without defined permissions, implementation may not match expectations."
+        elif "not ready" in notes_lower or "backlog" in notes_lower:
+            decision = "Decide if this story should proceed or be deferred"
+            why = "Unresolved scope creates delivery risk for this sprint."
+        elif status.lower() in ("blocked", "flagged"):
+            decision = "Unblock or reassign this item"
+            why = "A blocked item may delay dependent stories."
+        else:
+            decision = "Review and confirm approach before development"
+            why = "High-risk item may require stakeholder alignment."
+
+        full_url = issue_url or f"{_JIRA_BASE_URL}/{issue_key}"
+        decisions.append(DecisionEntry(
+            issue_key=issue_key,
+            issue_url=full_url,
+            title=title,
+            decision_needed=decision,
+            why_it_matters=why,
+        ))
+    return decisions
+
+_DEFAULT_STAKEHOLDERS = [
+    ("Product / Delivery Owner", "@Nadin Gut", "Sprint scope and stakeholder visibility"),
+    ("QA / Quality Owner", "@Nadin Gut", "Requirement readiness and test coverage review"),
+]
+
+
+def _issue_link(issue_key: str, issue_url: Optional[str]) -> str:
+    """Return an HTML anchor for the issue, generating the URL if not provided."""
+    url = issue_url or f"{_JIRA_BASE_URL}/{issue_key}"
+    return f'<a href="{url}">{issue_key}</a>'
 
 
 def _render_confluence_sprint_body(
@@ -1129,36 +1248,46 @@ def _render_confluence_sprint_body(
     clarification_count: int,
     sprint_scope: list,
     qa_focus_areas: list,
-    recommended_actions: list,
+    decisions_needed: list,
 ) -> tuple[str, str]:
     """
-    Render sprint analysis as Confluence storage-format HTML.
-    
+    Render sprint analysis as stakeholder-facing Confluence storage-format HTML.
+
     Returns (page_title, page_body_storage).
     Uses only safe tags: h1, h2, p, table, tr, th, td, ul, li, strong, a.
     No markdown, no escaped newlines, no leading "=".
-    
+
     Sections:
     1. H1: {Sprint Name} Dashboard
     2. Executive Summary
-    3. Sprint Metrics table
-    4. Sprint Scope table
-    5. QA Focus Areas
-    6. Recommended Actions
+    3. Stakeholders
+    4. Sprint Metrics
+    5. Progress Snapshot
+    6. Sprint Scope
+    7. QA / Delivery Focus Areas
+    8. Decision Needed
     """
     parts = []
-    
+
     # Clean sprint name - remove any leading "=" that might exist
     clean_sprint_name = sprint_name.lstrip("=").strip()
-    
-    # 1. Dashboard title (no "Quality", just "Dashboard")
+
+    # 1. Title
     parts.append(f"<h1>{clean_sprint_name} Dashboard</h1>")
-    
+
     # 2. Executive Summary
     parts.append("<h2>Executive Summary</h2>")
     parts.append(f"<p>{executive_summary}</p>")
-    
-    # 3. Sprint Metrics table (compact)
+
+    # 3. Stakeholders
+    parts.append("<h2>Stakeholders</h2>")
+    parts.append("<table>")
+    parts.append("<tr><th>Role</th><th>Name</th><th>Responsibility</th></tr>")
+    for role, name, responsibility in _DEFAULT_STAKEHOLDERS:
+        parts.append(f"<tr><td>{role}</td><td>{name}</td><td>{responsibility}</td></tr>")
+    parts.append("</table>")
+
+    # 4. Sprint Metrics (compact)
     parts.append("<h2>Sprint Metrics</h2>")
     parts.append("<table>")
     parts.append("<tr><th>Metric</th><th>Value</th></tr>")
@@ -1168,14 +1297,35 @@ def _render_confluence_sprint_body(
     parts.append(f"<tr><td>High Risk Items</td><td>{high_risk_count}</td></tr>")
     parts.append(f"<tr><td>Items Needing Clarification</td><td>{clarification_count}</td></tr>")
     parts.append("</table>")
-    
-    # 4. Sprint Scope table
+
+    # 5. Progress Snapshot (status counts from sprint_scope)
+    parts.append("<h2>Progress Snapshot</h2>")
+    status_counts: dict[str, int] = {}
+    for entry in sprint_scope:
+        raw_status = (entry.status if hasattr(entry, 'status') else entry.get('status')) or "Unknown"
+        status_counts[raw_status] = status_counts.get(raw_status, 0) + 1
+    # Standardise well-known statuses; collect remainder as-is
+    snapshot_rows: list[tuple[str, int]] = []
+    for label in ("To Do", "In Progress", "Done"):
+        count = status_counts.pop(label, 0)
+        snapshot_rows.append((label, count))
+    blocked_count = status_counts.pop("Blocked", 0) + status_counts.pop("Flagged", 0)
+    for other_status, cnt in status_counts.items():
+        if other_status != "Unknown":
+            blocked_count += cnt
+    snapshot_rows.append(("Blocked / Flagged", blocked_count))
+    parts.append("<table>")
+    parts.append("<tr><th>Status</th><th>Count</th></tr>")
+    for label, count in snapshot_rows:
+        parts.append(f"<tr><td>{label}</td><td>{count}</td></tr>")
+    parts.append("</table>")
+
+    # 6. Sprint Scope table
     parts.append("<h2>Sprint Scope</h2>")
     if sprint_scope:
         parts.append("<table>")
         parts.append("<tr><th>Issue</th><th>Title</th><th>Assignee</th><th>Status</th><th>Risk</th><th>Reason</th><th>Acceptance Criteria / Notes</th></tr>")
         for entry in sprint_scope:
-            # Handle both dict and SprintScopeEntry objects
             if hasattr(entry, 'issue_key'):
                 issue_key = entry.issue_key
                 title = entry.title
@@ -1194,41 +1344,46 @@ def _render_confluence_sprint_body(
                 reason = entry.get('reason', '')
                 notes = entry.get('notes', '')
                 issue_url = entry.get('issue_url')
-            
-            # Render issue as link if URL provided
-            if issue_url:
-                issue_cell = f'<a href="{issue_url}">{issue_key}</a>'
-            else:
-                issue_cell = issue_key
-            
+            issue_cell = _issue_link(issue_key, issue_url)
             parts.append(f"<tr><td>{issue_cell}</td><td>{title}</td><td>{assignee}</td><td>{status}</td><td>{risk}</td><td>{reason}</td><td>{notes}</td></tr>")
         parts.append("</table>")
     else:
         parts.append("<p>No issues in sprint scope.</p>")
-    
-    # 5. QA Focus Areas
-    parts.append("<h2>QA Focus Areas</h2>")
+
+    # 7. QA / Delivery Focus Areas
+    parts.append("<h2>QA / Delivery Focus Areas</h2>")
     if qa_focus_areas:
         parts.append("<ul>")
         for area in qa_focus_areas:
             parts.append(f"<li>{area}</li>")
         parts.append("</ul>")
     else:
-        parts.append("<p>No specific QA focus areas identified.</p>")
-    
-    # 6. Recommended Actions
-    parts.append("<h2>Recommended Actions</h2>")
-    if recommended_actions:
-        parts.append("<ul>")
-        for action in recommended_actions:
-            parts.append(f"<li>{action}</li>")
-        parts.append("</ul>")
+        parts.append("<p>No specific focus areas identified.</p>")
+
+    # 8. Decision Needed
+    parts.append("<h2>Decision Needed</h2>")
+    if decisions_needed:
+        parts.append("<table>")
+        parts.append("<tr><th>Issue</th><th>Decision Needed</th><th>Why It Matters</th></tr>")
+        for d in decisions_needed:
+            if hasattr(d, 'issue_key'):
+                issue_key = d.issue_key
+                issue_url = d.issue_url
+                decision = d.decision_needed
+                why = d.why_it_matters
+            else:
+                issue_key = d.get('issue_key', '')
+                issue_url = d.get('issue_url', '')
+                decision = d.get('decision_needed', '')
+                why = d.get('why_it_matters', '')
+            issue_cell = _issue_link(issue_key, issue_url)
+            parts.append(f"<tr><td>{issue_cell}</td><td>{decision}</td><td>{why}</td></tr>")
+        parts.append("</table>")
     else:
-        parts.append("<p>No specific actions recommended.</p>")
-    
+        parts.append("<p>No stakeholder decisions currently detected.</p>")
+
     page_body = "".join(parts)
     page_title = f"{clean_sprint_name} Dashboard"
-    
     return (page_title, page_body)
 
 
@@ -1247,7 +1402,7 @@ def _render_confluence_sprint_page(analysis: "SprintAnalysisResponse") -> dict:
         clarification_count=analysis.clarification_count,
         sprint_scope=analysis.sprint_scope,
         qa_focus_areas=analysis.qa_focus_areas,
-        recommended_actions=analysis.recommended_actions,
+        decisions_needed=analysis.decisions_needed,
     )
     return {
         "page_title": page_title,
@@ -1663,13 +1818,21 @@ async def analyze_sprint(
         else:
             recommended_actions.append("Monitor risky items during sprint execution.")
     
-    # Generate executive summary
+    # Generate executive summary (stakeholder delivery-focused)
+    issue_titles = [issue.title for issue in request.issues]
     executive_summary = _generate_executive_summary(
-        request.sprint_name, sprint_health, delivery_confidence,
-        ready_count, needs_refinement_count, not_ready_count,
-        total_issues, high_risk_count
+        sprint_name=request.sprint_name,
+        sprint_health=sprint_health,
+        delivery_confidence=delivery_confidence,
+        total_issues=total_issues,
+        high_risk_count=high_risk_count,
+        needs_refinement_count=needs_refinement_count,
+        issue_titles=issue_titles,
     )
-    
+
+    # Build decisions needed for stakeholder section
+    decisions_needed = _build_decisions_needed(sprint_scope, request.issues)
+
     # Generate Confluence page (included inline to avoid separate API call)
     confluence_page_title, confluence_page_body_storage = _render_confluence_sprint_body(
         sprint_name=request.sprint_name,
@@ -1681,9 +1844,9 @@ async def analyze_sprint(
         clarification_count=total_clarifications,
         sprint_scope=sprint_scope,
         qa_focus_areas=qa_focus_areas,
-        recommended_actions=recommended_actions,
+        decisions_needed=decisions_needed,
     )
-    
+
     return SprintAnalysisResponse(
         sprint_name=request.sprint_name,
         context_distribution=context_distribution,
@@ -1702,6 +1865,7 @@ async def analyze_sprint(
         qa_focus_areas=qa_focus_areas,
         blocked_candidates=blocked_candidates,
         recommended_actions=recommended_actions,
+        decisions_needed=decisions_needed,
         executive_summary=executive_summary,
         confluence_page_title=confluence_page_title,
         confluence_page_body_storage=confluence_page_body_storage

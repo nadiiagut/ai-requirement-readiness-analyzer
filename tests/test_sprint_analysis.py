@@ -9,10 +9,12 @@ from src.api import (
     _compute_sprint_health_from_labels,
     _compute_delivery_confidence,
     _generate_executive_summary,
+    _infer_sprint_themes,
     SprintIssue,
     SprintAnalysisRequest,
     SprintAnalysisResponse,
     SprintScopeEntry,
+    DecisionEntry,
     RiskyEntry,
 )
 
@@ -163,57 +165,106 @@ class TestComputeDeliveryConfidence:
         assert _compute_delivery_confidence(49, 0.39) == "Low"
 
 
+class TestInferSprintThemes:
+    """Tests for sprint theme inference."""
+
+    def test_access_control_theme(self):
+        themes = _infer_sprint_themes(["User role setup", "Access permissions"])
+        assert "access control" in themes
+
+    def test_user_management_theme(self):
+        themes = _infer_sprint_themes(["Create user profile", "Onboard new account"])
+        assert "user management" in themes
+
+    def test_no_themes_returns_empty(self):
+        themes = _infer_sprint_themes(["Fix typo", "Update README"])
+        assert themes == []
+
+    def test_max_three_themes(self):
+        themes = _infer_sprint_themes([
+            "User login", "Access role", "Dashboard metrics",
+            "Payment invoice", "Send notification"
+        ])
+        assert len(themes) <= 3
+
+
 class TestGenerateExecutiveSummary:
-    """Tests for executive summary generation."""
-    
+    """Tests for stakeholder-facing executive summary generation."""
+
     def test_high_confidence_summary(self):
         summary = _generate_executive_summary(
             sprint_name="Sprint 1",
             sprint_health=85,
             delivery_confidence="High",
-            ready_count=8,
-            needs_refinement_count=0,
-            not_ready_count=0,
             total_issues=10,
-            high_risk_count=1
+            high_risk_count=0,
+            needs_refinement_count=0,
+            issue_titles=["User role setup", "Access permissions"],
         )
-        assert "Sprint 1" in summary
-        assert "ready for delivery" in summary
-        assert "8/10" in summary
-    
-    def test_medium_confidence_summary(self):
+        assert "access control" in summary
+        assert "high" in summary
+        assert "85/100" in summary
+
+    def test_medium_confidence_with_refinement(self):
         summary = _generate_executive_summary(
             sprint_name="Sprint 2",
             sprint_health=60,
             delivery_confidence="Medium",
-            ready_count=5,
-            needs_refinement_count=2,
-            not_ready_count=0,
             total_issues=10,
-            high_risk_count=3
+            high_risk_count=0,
+            needs_refinement_count=2,
+            issue_titles=[],
         )
-        assert "Sprint 2" in summary
-        assert "moderate risk" in summary
-    
-    def test_low_confidence_summary(self):
+        assert "medium" in summary
+        assert "unresolved acceptance criteria" in summary
+        assert "2 stories" in summary
+
+    def test_low_confidence_with_high_risk(self):
         summary = _generate_executive_summary(
             sprint_name="Sprint 3",
             sprint_health=30,
             delivery_confidence="Low",
-            ready_count=2,
-            needs_refinement_count=5,
-            not_ready_count=3,
             total_issues=10,
-            high_risk_count=8
+            high_risk_count=3,
+            needs_refinement_count=0,
+            issue_titles=[],
         )
-        assert "Sprint 3" in summary
-        assert "risk" in summary.lower()
-    
+        assert "low" in summary
+        assert "3 high-risk items" in summary
+
     def test_summary_includes_health_score(self):
         summary = _generate_executive_summary(
-            "Test Sprint", 75, "Medium", 5, 2, 0, 10, 2
+            sprint_name="Test Sprint",
+            sprint_health=75,
+            delivery_confidence="Medium",
+            total_issues=10,
+            high_risk_count=0,
+            needs_refinement_count=0,
         )
         assert "75/100" in summary
+
+    def test_no_issues_returns_message(self):
+        summary = _generate_executive_summary(
+            sprint_name="Empty Sprint",
+            sprint_health=0,
+            delivery_confidence="Low",
+            total_issues=0,
+            high_risk_count=0,
+            needs_refinement_count=0,
+        )
+        assert "no issues" in summary.lower()
+
+    def test_theme_in_summary(self):
+        summary = _generate_executive_summary(
+            sprint_name="S",
+            sprint_health=70,
+            delivery_confidence="Medium",
+            total_issues=5,
+            high_risk_count=0,
+            needs_refinement_count=0,
+            issue_titles=["Admin configuration", "Setup control panel"],
+        )
+        assert "configuration and admin" in summary
 
 
 class TestSprintAnalysisEndpoint:
@@ -508,7 +559,7 @@ class TestSprintAnalysisConfluenceOutput:
         assert not data["confluence_page_title"].startswith("=")
     
     def test_confluence_body_is_html(self):
-        """Test that confluence_page_body_storage is valid HTML with new sections."""
+        """Test that confluence_page_body_storage contains all required stakeholder sections."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
@@ -521,16 +572,92 @@ class TestSprintAnalysisConfluenceOutput:
         assert response.status_code == 200
         data = response.json()
         body = data["confluence_page_body_storage"]
-        
+
         # Should start with h1 title (no "Quality" in title)
         assert body.startswith("<h1>HTML Test Sprint Dashboard</h1>")
-        # Should contain new compact sections
+        # All stakeholder sections must be present
         assert "<h2>Executive Summary</h2>" in body
+        assert "<h2>Stakeholders</h2>" in body
         assert "<h2>Sprint Metrics</h2>" in body
+        assert "<h2>Progress Snapshot</h2>" in body
         assert "<h2>Sprint Scope</h2>" in body
+        assert "<h2>QA / Delivery Focus Areas</h2>" in body
+        assert "<h2>Decision Needed</h2>" in body
         # Should NOT contain removed sections
         assert "Readiness Distribution" not in body
         assert "Story Breakdown" not in body
+        assert "Recommended Actions" not in body
+
+    def test_confluence_body_stakeholders_present(self):
+        """Test that Stakeholders section has default rows."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Stakeholder Sprint",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Test", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "Product / Delivery Owner" in body
+        assert "@Nadin Gut" in body
+        assert "QA / Quality Owner" in body
+
+    def test_confluence_body_progress_snapshot(self):
+        """Test that Progress Snapshot shows status breakdown."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Progress Sprint",
+                "issues": [
+                    {"issue_key": "T-1", "title": "Todo item", "labels": [], "status": "To Do"},
+                    {"issue_key": "T-2", "title": "Done item", "labels": [], "status": "Done"},
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "<h2>Progress Snapshot</h2>" in body
+        assert "To Do" in body
+        assert "Done" in body
+        assert "Blocked / Flagged" in body
+
+    def test_confluence_body_issue_link_auto_generated(self):
+        """Test that issue links are auto-generated when no issue_url is provided."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Auto Link Sprint",
+                "issues": [
+                    {"issue_key": "NG-99", "title": "No URL issue", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert '<a href="https://nadingut.atlassian.net/browse/NG-99">NG-99</a>' in body
+
+    def test_confluence_body_decisions_needed_for_high_risk(self):
+        """Test that Decision Needed section is populated for high-risk items."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Decision Sprint",
+                "issues": [
+                    {
+                        "issue_key": "NG-5",
+                        "title": "Role permission setup",
+                        "labels": ["needs-refinement"],
+                        "status": "To Do"
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "<h2>Decision Needed</h2>" in body
     
     def test_confluence_body_no_markdown(self):
         """Test that confluence body contains no markdown syntax."""

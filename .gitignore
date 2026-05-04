@@ -17,5 +17,5 @@ __pycache__/
 # OS
 .DS_Store
 
-# Outputs (optional - uncomment to track examples)
-# outputs/
+# Generated outputs (not source-controlled)
+outputs/
