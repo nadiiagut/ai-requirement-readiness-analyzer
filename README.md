@@ -368,9 +368,11 @@ Sprint analysis can be triggered by **Jira, GitLab, GitHub Projects, Azure DevOp
   ],
   "executive_summary": "This sprint focuses on access control and configuration and admin. Delivery confidence is medium due to unresolved acceptance criteria on 1 story. Health: 68/100.",
   "confluence_page_title": "Sprint 23 Dashboard",
-  "confluence_page_body_storage": "<h1>Sprint 23 Dashboard</h1>..."
+  "confluence_page_body_storage": "<h1>Sprint 23 Dashboard</h1><h2>Executive Summary</h2><p>...</p><h2>Stakeholders</h2><table>...</table><h2>Sprint Metrics</h2><table>...</table><h2>Progress Snapshot</h2><table>...</table><h2>Sprint Scope</h2><table>...</table><h2>QA / Delivery Focus Areas</h2><ul>...</ul><h2>Decision Needed</h2><p>No stakeholder decisions currently detected.</p>"
 }
 ```
+
+> **Note:** `confluence_page_body_storage` always contains the complete Confluence storage-format HTML body (typically 1,500–3,000+ characters depending on issue count). It is never a placeholder — every section is rendered with real data or a fallback message (e.g. `No stakeholder decisions currently detected.`). The value above is abbreviated for readability.
 
 **Label Detection:**
 

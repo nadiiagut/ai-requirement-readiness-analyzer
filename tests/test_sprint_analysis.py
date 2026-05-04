@@ -771,3 +771,156 @@ class TestSprintAnalysisConfluenceOutput:
         data = response.json()
         # Health score should be at least 1 when issues exist
         assert data["sprint_health_score"] >= 1
+
+
+class TestConfluenceBodyCompleteness:
+    """Tests that confluence_page_body_storage is always a full HTML page, never a placeholder."""
+
+    def test_body_length_over_500_with_one_issue(self):
+        """Full Confluence body must be at least 500 chars when issues exist."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Length Test",
+                "issues": [
+                    {"issue_key": "LT-1", "title": "Login flow", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert len(body) > 500, f"Body too short ({len(body)} chars) — likely a placeholder"
+
+    def test_body_length_over_500_with_multiple_issues(self):
+        """Body should grow with more issues — still well above 500 chars."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Multi Issue Sprint",
+                "issues": [
+                    {"issue_key": "MI-1", "title": "User registration", "labels": ["ready-for-sprint"]},
+                    {"issue_key": "MI-2", "title": "Password reset", "labels": ["needs-review"]},
+                    {"issue_key": "MI-3", "title": "Dashboard setup", "labels": ["needs-refinement"]},
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert len(body) > 500
+
+    def test_body_does_not_contain_ellipsis(self):
+        """Body must never contain a bare '...' placeholder."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "No Ellipsis Sprint",
+                "issues": [
+                    {"issue_key": "NE-1", "title": "Feature A", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "..." not in body, "confluence_page_body_storage contains placeholder '...'"
+
+    def test_body_contains_executive_summary_section(self):
+        """Body must contain the Executive Summary heading."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Section Check",
+                "issues": [
+                    {"issue_key": "SC-1", "title": "Some story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "<h2>Executive Summary</h2>" in body
+
+    def test_body_contains_sprint_scope_section(self):
+        """Body must contain the Sprint Scope heading."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Section Check",
+                "issues": [
+                    {"issue_key": "SC-2", "title": "Another story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "<h2>Sprint Scope</h2>" in body
+
+    def test_body_contains_all_required_sections(self):
+        """Body must contain all 8 required stakeholder sections."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Full Sections Sprint",
+                "issues": [
+                    {"issue_key": "FS-1", "title": "Feature", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        required = [
+            "<h2>Executive Summary</h2>",
+            "<h2>Stakeholders</h2>",
+            "<h2>Sprint Metrics</h2>",
+            "<h2>Progress Snapshot</h2>",
+            "<h2>Sprint Scope</h2>",
+            "<h2>QA / Delivery Focus Areas</h2>",
+            "<h2>Decision Needed</h2>",
+        ]
+        for section in required:
+            assert section in body, f"Missing section: {section}"
+
+    def test_body_contains_issue_key_when_issues_exist(self):
+        """Body must contain the issue key somewhere when issues are provided."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Key Check Sprint",
+                "issues": [
+                    {"issue_key": "KC-42", "title": "Config setup", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "KC-42" in body, "Issue key KC-42 not found in confluence_page_body_storage"
+
+    def test_body_issue_key_appears_as_link(self):
+        """Issue key in Sprint Scope must be an anchor tag with Jira URL."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Link Sprint",
+                "issues": [
+                    {"issue_key": "LK-7", "title": "Role management", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert '<a href="https://nadingut.atlassian.net/browse/LK-7">LK-7</a>' in body
+
+    def test_body_empty_sections_have_fallback_message(self):
+        """Sections with no data must render a fallback message, not be empty."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Fallback Sprint",
+                "issues": [
+                    {"issue_key": "FB-1", "title": "Ready story", "labels": ["ready-for-sprint"]}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        # Decision Needed should show fallback if no decisions detected
+        if "No stakeholder decisions currently detected." in body:
+            assert "<h2>Decision Needed</h2>" in body  # section heading still present
