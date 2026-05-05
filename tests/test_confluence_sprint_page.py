@@ -123,8 +123,8 @@ class TestRenderConfluenceSprintPage:
         assert "<h2>Executive Summary</h2>" in body
         assert "<p>This is the summary.</p>" in body
     
-    def test_body_contains_sprint_metrics_table(self):
-        """Test that body contains Sprint Metrics table with required fields."""
+    def test_body_contains_sprint_snapshot_table(self):
+        """Test that Sprint Snapshot contains both metrics and status breakdown."""
         analysis = _sample_sprint_analysis(
             sprint_health_score=82,
             delivery_confidence="High",
@@ -134,7 +134,7 @@ class TestRenderConfluenceSprintPage:
         )
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>Sprint Metrics</h2>" in body
+        assert "<h2>Sprint Snapshot</h2>" in body
         assert "Sprint Health Score" in body
         assert "82/100" in body
         assert "Delivery Confidence" in body
@@ -283,13 +283,13 @@ class TestRenderConfluenceSprintPage:
         assert "Risky Sprint Entries" not in body
     
     def test_body_contains_qa_focus_areas(self):
-        """Test that body contains QA / Delivery Focus Areas (renamed section)."""
+        """Test that body contains QA Focus Areas section."""
         analysis = _sample_sprint_analysis(
             qa_focus_areas=["Edge case testing", "Integration testing"]
         )
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>QA / Delivery Focus Areas</h2>" in body
+        assert "<h2>QA Focus Areas</h2>" in body
         assert "<li>Edge case testing</li>" in body
 
     def test_qa_section_contains_97_percent_target(self):
@@ -319,8 +319,8 @@ class TestRenderConfluenceSprintPage:
         assert "Product / Delivery Owner" in body
         assert "@Nadin Gut" in body
 
-    def test_body_contains_progress_snapshot(self):
-        """Test that Progress Snapshot section is present."""
+    def test_body_contains_sprint_snapshot_status_breakdown(self):
+        """Sprint Snapshot must include the status breakdown table."""
         scope = [
             SprintScopeEntry(issue_key="T-1", title="A", assignee=None,
                              status="To Do", risk="Low", reason="r", notes="n", issue_url=None),
@@ -332,7 +332,7 @@ class TestRenderConfluenceSprintPage:
         analysis = _sample_sprint_analysis(sprint_scope=scope)
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>Progress Snapshot</h2>" in body
+        assert "<h2>Sprint Snapshot</h2>" in body
         assert "<td>To Do</td><td>1</td>" in body
         assert "<td>In Progress</td><td>1</td>" in body
         assert "<td>Done</td><td>1</td>" in body
@@ -685,10 +685,9 @@ class TestConfluenceSprintPageEndpoint:
         assert "Dashboard" in body
         assert "Executive Summary" in body
         assert "Stakeholders" in body
-        assert "Sprint Metrics" in body
-        assert "Progress Snapshot" in body
+        assert "Sprint Snapshot" in body
         assert "Sprint Scope" in body
-        assert "QA / Delivery Focus Areas" in body
+        assert "QA Focus Areas" in body
         assert "Decision Needed" in body
 
         # Removed sections should NOT be present

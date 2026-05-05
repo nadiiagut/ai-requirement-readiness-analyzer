@@ -1264,12 +1264,11 @@ def _render_confluence_sprint_body(
     1. H1: {Sprint Name} Dashboard
     2. Executive Summary
     3. Stakeholders
-    4. Sprint Metrics
-    5. Progress Snapshot
-    6. Live Sprint Scope  (Confluence Jira macro)
-    7. Delivery Risk Review (AI-generated risk table)
-    8. QA / Delivery Focus Areas
-    9. Decision Needed
+    4. Sprint Snapshot  (metrics table + status breakdown)
+    5. Live Sprint Scope  (Confluence Jira macro)
+    6. Delivery Risk Review (AI-generated risk table)
+    7. QA Focus Areas
+    8. Decision Needed
     """
     parts = []
 
@@ -1291,8 +1290,8 @@ def _render_confluence_sprint_body(
         parts.append(f"<tr><td>{role}</td><td>{name}</td><td>{responsibility}</td></tr>")
     parts.append("</table>")
 
-    # 4. Sprint Metrics (compact)
-    parts.append("<h2>Sprint Metrics</h2>")
+    # 4. Sprint Snapshot (metrics + status breakdown)
+    parts.append("<h2>Sprint Snapshot</h2>")
     parts.append("<table>")
     parts.append("<tr><th>Metric</th><th>Value</th></tr>")
     parts.append(f"<tr><td>Sprint Health Score</td><td>{sprint_health_score}/100</td></tr>")
@@ -1301,9 +1300,6 @@ def _render_confluence_sprint_body(
     parts.append(f"<tr><td>High Risk Items</td><td>{high_risk_count}</td></tr>")
     parts.append(f"<tr><td>Items Needing Clarification</td><td>{clarification_count}</td></tr>")
     parts.append("</table>")
-
-    # 5. Progress Snapshot (status counts from sprint_scope)
-    parts.append("<h2>Progress Snapshot</h2>")
     status_counts: dict[str, int] = {}
     for entry in sprint_scope:
         raw_status = (entry.status if hasattr(entry, 'status') else entry.get('status')) or "Unknown"
@@ -1324,7 +1320,7 @@ def _render_confluence_sprint_body(
         parts.append(f"<tr><td>{label}</td><td>{count}</td></tr>")
     parts.append("</table>")
 
-    # 6. Live Sprint Scope — Confluence Jira macro
+    # 5. Live Sprint Scope — Confluence Jira macro
     parts.append("<h2>Live Sprint Scope</h2>")
     if sprint_id:
         parts.append(
@@ -1335,7 +1331,7 @@ def _render_confluence_sprint_body(
     else:
         parts.append("<p>No sprint ID provided — live Jira board unavailable.</p>")
 
-    # 7. Delivery Risk Review — AI-generated risk analysis per issue
+    # 6. Delivery Risk Review — AI-generated risk analysis per issue
     parts.append("<h2>Delivery Risk Review</h2>")
     if sprint_scope:
         parts.append("<table>")
@@ -1361,15 +1357,15 @@ def _render_confluence_sprint_body(
     else:
         parts.append("<p>No issues in sprint scope.</p>")
 
-    # 8. QA / Delivery Focus Areas
-    parts.append("<h2>QA / Delivery Focus Areas</h2>")
+    # 7. QA Focus Areas
+    parts.append("<h2>QA Focus Areas</h2>")
     parts.append("<ul>")
     parts.append("<li>Maintain 97% pass rate on new feature tests and regression suite.</li>")
     for area in qa_focus_areas:
         parts.append(f"<li>{area}</li>")
     parts.append("</ul>")
 
-    # 9. Decision Needed
+    # 8. Decision Needed
     parts.append("<h2>Decision Needed</h2>")
     if decisions_needed:
         parts.append("<table>")

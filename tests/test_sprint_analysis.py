@@ -578,11 +578,10 @@ class TestSprintAnalysisConfluenceOutput:
         # All stakeholder sections must be present
         assert "<h2>Executive Summary</h2>" in body
         assert "<h2>Stakeholders</h2>" in body
-        assert "<h2>Sprint Metrics</h2>" in body
-        assert "<h2>Progress Snapshot</h2>" in body
+        assert "<h2>Sprint Snapshot</h2>" in body
         assert "<h2>Live Sprint Scope</h2>" in body
         assert "<h2>Delivery Risk Review</h2>" in body
-        assert "<h2>QA / Delivery Focus Areas</h2>" in body
+        assert "<h2>QA Focus Areas</h2>" in body
         assert "<h2>Decision Needed</h2>" in body
         # Should NOT contain removed sections
         assert "Readiness Distribution" not in body
@@ -606,8 +605,8 @@ class TestSprintAnalysisConfluenceOutput:
         assert "@Nadin Gut" in body
         assert "QA / Quality Owner" in body
 
-    def test_confluence_body_progress_snapshot(self):
-        """Test that Progress Snapshot shows status breakdown."""
+    def test_confluence_body_sprint_snapshot(self):
+        """Test that Sprint Snapshot shows both metrics and status breakdown."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
@@ -620,7 +619,8 @@ class TestSprintAnalysisConfluenceOutput:
         )
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
-        assert "<h2>Progress Snapshot</h2>" in body
+        assert "<h2>Sprint Snapshot</h2>" in body
+        assert "Sprint Health Score" in body
         assert "To Do" in body
         assert "Done" in body
         assert "Blocked / Flagged" in body
@@ -873,11 +873,10 @@ class TestConfluenceBodyCompleteness:
         required = [
             "<h2>Executive Summary</h2>",
             "<h2>Stakeholders</h2>",
-            "<h2>Sprint Metrics</h2>",
-            "<h2>Progress Snapshot</h2>",
+            "<h2>Sprint Snapshot</h2>",
             "<h2>Live Sprint Scope</h2>",
             "<h2>Delivery Risk Review</h2>",
-            "<h2>QA / Delivery Focus Areas</h2>",
+            "<h2>QA Focus Areas</h2>",
             "<h2>Decision Needed</h2>",
         ]
         for section in required:
@@ -959,7 +958,7 @@ class TestConfluenceBodyCompleteness:
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
         target = "<li>Maintain 97% pass rate on new feature tests and regression suite.</li>"
-        qa_section_start = body.find("<h2>QA / Delivery Focus Areas</h2>")
+        qa_section_start = body.find("<h2>QA Focus Areas</h2>")
         assert qa_section_start != -1
         target_pos = body.find(target, qa_section_start)
         assert target_pos != -1, "97% target not found in QA section"
