@@ -1284,7 +1284,6 @@ def _render_confluence_sprint_body(
     sprint_scope: list,
     qa_focus_areas: list,
     decisions_needed: list,
-    sprint_id: Optional[int] = None,
 ) -> tuple[str, str]:
     """
     Render sprint analysis as stakeholder-facing Confluence storage-format HTML.
@@ -1299,10 +1298,9 @@ def _render_confluence_sprint_body(
     2. Executive Summary
     3. Stakeholders
     4. Sprint Snapshot  (metrics table + status breakdown)
-    5. Live Sprint Scope  (Confluence Jira macro)
-    6. Delivery Risk Review (AI-generated risk table)
-    7. QA Focus Areas
-    8. Decision Needed
+    5. Sprint Scope  (Issue, Title, Status, Risk, Reason, Acceptance Criteria / Notes)
+    6. QA Focus Areas
+    7. Decision Needed  (Issue, Decision Needed)
     """
     parts = []
 
@@ -1354,26 +1352,16 @@ def _render_confluence_sprint_body(
         parts.append(f"<tr><td>{label}</td><td>{count}</td></tr>")
     parts.append("</table>")
 
-    # 5. Live Sprint Scope — Confluence Jira macro
-    parts.append("<h2>Live Sprint Scope</h2>")
-    if sprint_id:
-        parts.append(
-            f'<ac:structured-macro ac:name="jira">'
-            f'<ac:parameter ac:name="jqlQuery">sprint = {sprint_id}</ac:parameter>'
-            f'</ac:structured-macro>'
-        )
-    else:
-        parts.append("<p>No sprint ID provided — live Jira board unavailable.</p>")
-
-    # 6. Delivery Risk Review — AI-generated risk analysis per issue
-    parts.append("<h2>Delivery Risk Review</h2>")
+    # 5. Sprint Scope
+    parts.append("<h2>Sprint Scope</h2>")
     if sprint_scope:
         parts.append("<table>")
-        parts.append("<tr><th>Issue</th><th>Title</th><th>Risk</th><th>Reason</th><th>Acceptance Criteria / Notes</th></tr>")
+        parts.append("<tr><th>Issue</th><th>Title</th><th>Status</th><th>Risk</th><th>Reason</th><th>Acceptance Criteria / Notes</th></tr>")
         for entry in sprint_scope:
             if hasattr(entry, 'issue_key'):
                 issue_key = entry.issue_key
                 title = entry.title
+                status = entry.status or "—"
                 risk = entry.risk
                 reason = entry.reason
                 notes = entry.notes
@@ -1381,17 +1369,18 @@ def _render_confluence_sprint_body(
             else:
                 issue_key = entry.get('issue_key', '')
                 title = entry.get('title', '')
+                status = entry.get('status') or "—"
                 risk = entry.get('risk', 'Medium')
                 reason = entry.get('reason', '')
                 notes = entry.get('notes', '')
                 issue_url = entry.get('issue_url')
             issue_cell = _issue_link(issue_key, issue_url)
-            parts.append(f"<tr><td>{issue_cell}</td><td>{title}</td><td>{risk}</td><td>{reason}</td><td>{notes}</td></tr>")
+            parts.append(f"<tr><td>{issue_cell}</td><td>{title}</td><td>{status}</td><td>{risk}</td><td>{reason}</td><td>{notes}</td></tr>")
         parts.append("</table>")
     else:
         parts.append("<p>No issues in sprint scope.</p>")
 
-    # 7. QA Focus Areas
+    # 6. QA Focus Areas
     parts.append("<h2>QA Focus Areas</h2>")
     parts.append("<ul>")
     parts.append("<li>Maintain 97% pass rate on new feature tests and regression suite.</li>")
@@ -1399,24 +1388,22 @@ def _render_confluence_sprint_body(
         parts.append(f"<li>{area}</li>")
     parts.append("</ul>")
 
-    # 8. Decision Needed
+    # 7. Decision Needed
     parts.append("<h2>Decision Needed</h2>")
     if decisions_needed:
         parts.append("<table>")
-        parts.append("<tr><th>Issue</th><th>Decision Needed</th><th>Why It Matters</th></tr>")
+        parts.append("<tr><th>Issue</th><th>Decision Needed</th></tr>")
         for d in decisions_needed:
             if hasattr(d, 'issue_key'):
                 issue_key = d.issue_key
                 issue_url = d.issue_url
                 decision = d.decision_needed
-                why = d.why_it_matters
             else:
                 issue_key = d.get('issue_key', '')
                 issue_url = d.get('issue_url', '')
                 decision = d.get('decision_needed', '')
-                why = d.get('why_it_matters', '')
             issue_cell = _issue_link(issue_key, issue_url)
-            parts.append(f"<tr><td>{issue_cell}</td><td>{decision}</td><td>{why}</td></tr>")
+            parts.append(f"<tr><td>{issue_cell}</td><td>{decision}</td></tr>")
         parts.append("</table>")
     else:
         parts.append("<p>No stakeholder decisions currently detected.</p>")
@@ -1442,7 +1429,6 @@ def _render_confluence_sprint_page(analysis: "SprintAnalysisResponse") -> dict:
         sprint_scope=analysis.sprint_scope,
         qa_focus_areas=analysis.qa_focus_areas,
         decisions_needed=analysis.decisions_needed,
-        sprint_id=analysis.sprint_id,
     )
     return {
         "page_title": page_title,
@@ -1881,7 +1867,6 @@ async def analyze_sprint(
         sprint_scope=sprint_scope,
         qa_focus_areas=qa_focus_areas,
         decisions_needed=decisions_needed,
-        sprint_id=request.sprint_id,
     )
 
     return SprintAnalysisResponse(

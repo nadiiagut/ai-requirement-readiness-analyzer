@@ -145,30 +145,27 @@ class TestRenderConfluenceSprintPage:
         assert "Items Needing Clarification" in body
     
     def test_body_contains_sprint_scope_sections(self):
-        """Body has Live Sprint Scope (Jira macro) + Delivery Risk Review (AI table)."""
+        """Sprint Scope table contains merged issue + risk data."""
         scope_entry = SprintScopeEntry(
             issue_key="NG-1",
             title="Test Feature",
-            assignee="John Doe",
-            status="In Progress",
+            assignee=None,
+            status="To Do",
             risk="High",
-            reason="Missing acceptance criteria",
-            notes="AC missing — requires refinement",
+            reason="High risk",
+            notes="Verify role permissions",
             issue_url=None
         )
         analysis = _sample_sprint_analysis(sprint_scope=[scope_entry])
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        # Live Sprint Scope uses Jira macro (no sprint_id → fallback message)
-        assert "<h2>Live Sprint Scope</h2>" in body
+        assert "<h2>Sprint Scope</h2>" in body
         assert "Risky Sprint Entries" not in body
-        # Delivery Risk Review has AI-generated analysis
-        assert "<h2>Delivery Risk Review</h2>" in body
+        assert "Delivery Risk Review" not in body
         assert "NG-1" in body
         assert "Test Feature" in body
         assert "High" in body
-        assert "In Progress" in body
-        assert "High" in body
+        assert "To Do" in body
     
     def test_body_contains_issue_links(self):
         """Test that issues are rendered as links when issue_url is provided."""
@@ -202,11 +199,12 @@ class TestRenderConfluenceSprintPage:
                              status="In Review", risk="Low", reason="r", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
-        # Status is preserved in model; rendered live by Jira macro — not in static HTML
+        # Status is preserved in model and rendered in Sprint Scope table
         assert analysis.sprint_scope[0].status == "In Review"
-        # Live Sprint Scope section is present in the rendered body
         result = _render_confluence_sprint_page(analysis)
-        assert "<h2>Live Sprint Scope</h2>" in result["page_body_storage"]
+        body = result["page_body_storage"]
+        assert "<h2>Sprint Scope</h2>" in body
+        assert "In Review" in body
 
     def test_jira_assignee_preserved_in_model(self):
         """Assignee from Jira input must be preserved in sprint_scope model — not inferred."""
@@ -217,7 +215,7 @@ class TestRenderConfluenceSprintPage:
         analysis = _sample_sprint_analysis(sprint_scope=scope)
         assert analysis.sprint_scope[0].assignee == "Bob Smith"
         result = _render_confluence_sprint_page(analysis)
-        assert "<h2>Live Sprint Scope</h2>" in result["page_body_storage"]
+        assert "<h2>Sprint Scope</h2>" in result["page_body_storage"]
 
     def test_missing_status_null_in_model(self):
         """When status is None, sprint_scope model status must be None (never inferred)."""
@@ -228,9 +226,9 @@ class TestRenderConfluenceSprintPage:
         analysis = _sample_sprint_analysis(sprint_scope=scope)
         assert analysis.sprint_scope[0].status is None
         result = _render_confluence_sprint_page(analysis)
-        # Static status column is gone; live status rendered by Jira macro
         body = result["page_body_storage"]
-        assert "<h2>Live Sprint Scope</h2>" in body
+        # Null status renders as em-dash in Sprint Scope table
+        assert "<h2>Sprint Scope</h2>" in body
 
     def test_missing_assignee_null_in_model(self):
         """When assignee is None, sprint_scope model assignee must be None (never inferred)."""
@@ -241,7 +239,7 @@ class TestRenderConfluenceSprintPage:
         analysis = _sample_sprint_analysis(sprint_scope=scope)
         assert analysis.sprint_scope[0].assignee is None
         result = _render_confluence_sprint_page(analysis)
-        assert "<h2>Live Sprint Scope</h2>" in result["page_body_storage"]
+        assert "<h2>Sprint Scope</h2>" in result["page_body_storage"]
 
     def test_provided_issue_url_rendered_as_link(self):
         """When issue_url is provided, it must be used as the href — not overridden."""
@@ -255,21 +253,20 @@ class TestRenderConfluenceSprintPage:
         body = result["page_body_storage"]
         assert '<a href="https://custom.atlassian.net/browse/J-5">J-5</a>' in body
 
-    def test_ai_risk_does_not_overwrite_jira_status(self):
-        """AI risk level appears in Delivery Risk Review; Jira status preserved in model only."""
+    def test_ai_risk_and_jira_status_both_in_sprint_scope(self):
+        """AI risk and Jira status both appear in the merged Sprint Scope table."""
         scope = [
             SprintScopeEntry(issue_key="J-6", title="Story F", assignee="Dev",
                              status="Done", risk="High", reason="High risk", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
-        # Jira status preserved in model, not rendered in static HTML
         assert analysis.sprint_scope[0].status == "Done"
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        # AI risk appears in Delivery Risk Review column
+        assert "<h2>Sprint Scope</h2>" in body
         assert "<td>High</td>" in body
-        # Delivery Risk Review section present
-        assert "<h2>Delivery Risk Review</h2>" in body
+        assert "<td>Done</td>" in body
+        assert "Delivery Risk Review" not in body
 
     def test_body_does_not_contain_removed_sections(self):
         """Test that removed sections are not present."""
@@ -696,3 +693,5 @@ class TestConfluenceSprintPageEndpoint:
         assert "Risky Sprint Entries" not in body
         assert "Context Distribution" not in body
         assert "Recommended Actions" not in body
+        assert "Delivery Risk Review" not in body
+        assert "Live Sprint Scope" not in body
