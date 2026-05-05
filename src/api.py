@@ -1289,18 +1289,17 @@ def _render_confluence_sprint_body(
     Render sprint analysis as stakeholder-facing Confluence storage-format HTML.
 
     Returns (page_title, page_body_storage).
-    Uses safe HTML tags (h1, h2, p, table, tr, th, td, ul, li, strong, a) plus
-    ac:structured-macro for the live Jira sprint board integration.
+    Uses safe HTML tags (h1, h2, p, table, tr, th, td, ul, li, strong, a).
     No markdown, no escaped newlines, no leading "=".
 
     Sections:
     1. H1: {Sprint Name} Dashboard
     2. Executive Summary
     3. Stakeholders
-    4. Sprint Snapshot  (metrics table + status breakdown)
+    4. Sprint Metrics  (health, confidence, totals)
     5. Sprint Scope  (Issue, Title, Status, Risk, Reason, Acceptance Criteria / Notes)
-    6. QA Focus Areas
-    7. Decision Needed  (Issue, Decision Needed)
+    6. Decision Needed  (Issue, Decision Needed)
+    7. QA / Delivery Focus Areas
     """
     parts = []
 
@@ -1322,8 +1321,8 @@ def _render_confluence_sprint_body(
         parts.append(f"<tr><td>{role}</td><td>{name}</td><td>{responsibility}</td></tr>")
     parts.append("</table>")
 
-    # 4. Sprint Snapshot (metrics + status breakdown)
-    parts.append("<h2>Sprint Snapshot</h2>")
+    # 4. Sprint Metrics
+    parts.append("<h2>Sprint Metrics</h2>")
     parts.append("<table>")
     parts.append("<tr><th>Metric</th><th>Value</th></tr>")
     parts.append(f"<tr><td>Sprint Health Score</td><td>{sprint_health_score}/100</td></tr>")
@@ -1331,25 +1330,6 @@ def _render_confluence_sprint_body(
     parts.append(f"<tr><td>Total Issues</td><td>{total_issues}</td></tr>")
     parts.append(f"<tr><td>High Risk Items</td><td>{high_risk_count}</td></tr>")
     parts.append(f"<tr><td>Items Needing Clarification</td><td>{clarification_count}</td></tr>")
-    parts.append("</table>")
-    status_counts: dict[str, int] = {}
-    for entry in sprint_scope:
-        raw_status = (entry.status if hasattr(entry, 'status') else entry.get('status')) or "Unknown"
-        status_counts[raw_status] = status_counts.get(raw_status, 0) + 1
-    # Standardise well-known statuses; collect remainder as-is
-    snapshot_rows: list[tuple[str, int]] = []
-    for label in ("To Do", "In Progress", "Done"):
-        count = status_counts.pop(label, 0)
-        snapshot_rows.append((label, count))
-    blocked_count = status_counts.pop("Blocked", 0) + status_counts.pop("Flagged", 0)
-    for other_status, cnt in status_counts.items():
-        if other_status != "Unknown":
-            blocked_count += cnt
-    snapshot_rows.append(("Blocked / Flagged", blocked_count))
-    parts.append("<table>")
-    parts.append("<tr><th>Status</th><th>Count</th></tr>")
-    for label, count in snapshot_rows:
-        parts.append(f"<tr><td>{label}</td><td>{count}</td></tr>")
     parts.append("</table>")
 
     # 5. Sprint Scope
@@ -1380,15 +1360,7 @@ def _render_confluence_sprint_body(
     else:
         parts.append("<p>No issues in sprint scope.</p>")
 
-    # 6. QA Focus Areas
-    parts.append("<h2>QA Focus Areas</h2>")
-    parts.append("<ul>")
-    parts.append("<li>Maintain 97% pass rate on new feature tests and regression suite.</li>")
-    for area in qa_focus_areas:
-        parts.append(f"<li>{area}</li>")
-    parts.append("</ul>")
-
-    # 7. Decision Needed
+    # 6. Decision Needed
     parts.append("<h2>Decision Needed</h2>")
     if decisions_needed:
         parts.append("<table>")
@@ -1407,6 +1379,14 @@ def _render_confluence_sprint_body(
         parts.append("</table>")
     else:
         parts.append("<p>No stakeholder decisions currently detected.</p>")
+
+    # 7. QA / Delivery Focus Areas
+    parts.append("<h2>QA / Delivery Focus Areas</h2>")
+    parts.append("<ul>")
+    parts.append("<li>Maintain 97% pass rate on new feature tests and regression suite.</li>")
+    for area in qa_focus_areas:
+        parts.append(f"<li>{area}</li>")
+    parts.append("</ul>")
 
     page_body = "".join(parts)
     page_title = f"{clean_sprint_name} Dashboard"

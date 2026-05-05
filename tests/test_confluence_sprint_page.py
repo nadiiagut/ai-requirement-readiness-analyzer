@@ -123,18 +123,18 @@ class TestRenderConfluenceSprintPage:
         assert "<h2>Executive Summary</h2>" in body
         assert "<p>This is the summary.</p>" in body
     
-    def test_body_contains_sprint_snapshot_table(self):
-        """Test that Sprint Snapshot contains both metrics and status breakdown."""
+    def test_body_contains_sprint_metrics_table(self):
+        """Test that Sprint Metrics section contains health and delivery data."""
         analysis = _sample_sprint_analysis(
             sprint_health_score=82,
             delivery_confidence="High",
             total_issues=10,
             high_risk_count=2,
-            clarification_count=3
+            clarification_count=3,
         )
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>Sprint Snapshot</h2>" in body
+        assert "<h2>Sprint Metrics</h2>" in body
         assert "Sprint Health Score" in body
         assert "82/100" in body
         assert "Delivery Confidence" in body
@@ -280,13 +280,13 @@ class TestRenderConfluenceSprintPage:
         assert "Risky Sprint Entries" not in body
     
     def test_body_contains_qa_focus_areas(self):
-        """Test that body contains QA Focus Areas section."""
+        """Test that body contains QA / Delivery Focus Areas section."""
         analysis = _sample_sprint_analysis(
             qa_focus_areas=["Edge case testing", "Integration testing"]
         )
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>QA Focus Areas</h2>" in body
+        assert "<h2>QA / Delivery Focus Areas</h2>" in body
         assert "<li>Edge case testing</li>" in body
 
     def test_qa_section_contains_97_percent_target(self):
@@ -316,8 +316,8 @@ class TestRenderConfluenceSprintPage:
         assert "Product / Delivery Owner" in body
         assert "@Nadin Gut" in body
 
-    def test_body_contains_sprint_snapshot_status_breakdown(self):
-        """Sprint Snapshot must include the status breakdown table."""
+    def test_sprint_scope_status_column_shows_per_issue_status(self):
+        """Status appears per-row in Sprint Scope table, not as a standalone summary."""
         scope = [
             SprintScopeEntry(issue_key="T-1", title="A", assignee=None,
                              status="To Do", risk="Low", reason="r", notes="n", issue_url=None),
@@ -329,11 +329,11 @@ class TestRenderConfluenceSprintPage:
         analysis = _sample_sprint_analysis(sprint_scope=scope)
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>Sprint Snapshot</h2>" in body
-        assert "<td>To Do</td><td>1</td>" in body
-        assert "<td>In Progress</td><td>1</td>" in body
-        assert "<td>Done</td><td>1</td>" in body
-        assert "Blocked / Flagged" in body
+        assert "<h2>Sprint Scope</h2>" in body
+        assert "<td>To Do</td>" in body
+        assert "<td>In Progress</td>" in body
+        assert "<td>Done</td>" in body
+        assert "Blocked / Flagged" not in body
 
     def test_body_contains_decision_needed(self):
         """Test that Decision Needed section is present."""
@@ -682,12 +682,13 @@ class TestConfluenceSprintPageEndpoint:
         assert "Dashboard" in body
         assert "Executive Summary" in body
         assert "Stakeholders" in body
-        assert "Sprint Snapshot" in body
+        assert "Sprint Metrics" in body
         assert "Sprint Scope" in body
-        assert "QA Focus Areas" in body
         assert "Decision Needed" in body
+        assert "QA / Delivery Focus Areas" in body
 
         # Removed sections should NOT be present
+        assert "Sprint Snapshot" not in body
         assert "Readiness Distribution" not in body
         assert "Story Breakdown" not in body
         assert "Risky Sprint Entries" not in body
@@ -695,3 +696,4 @@ class TestConfluenceSprintPageEndpoint:
         assert "Recommended Actions" not in body
         assert "Delivery Risk Review" not in body
         assert "Live Sprint Scope" not in body
+        assert "Blocked / Flagged" not in body

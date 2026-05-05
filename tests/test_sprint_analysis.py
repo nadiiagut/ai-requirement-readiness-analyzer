@@ -613,10 +613,10 @@ class TestSprintAnalysisConfluenceOutput:
         # All stakeholder sections must be present
         assert "<h2>Executive Summary</h2>" in body
         assert "<h2>Stakeholders</h2>" in body
-        assert "<h2>Sprint Snapshot</h2>" in body
+        assert "<h2>Sprint Metrics</h2>" in body
         assert "<h2>Sprint Scope</h2>" in body
-        assert "<h2>QA Focus Areas</h2>" in body
         assert "<h2>Decision Needed</h2>" in body
+        assert "<h2>QA / Delivery Focus Areas</h2>" in body
         # Should NOT contain removed sections
         assert "Readiness Distribution" not in body
         assert "Story Breakdown" not in body
@@ -639,25 +639,23 @@ class TestSprintAnalysisConfluenceOutput:
         assert "@Nadin Gut" in body
         assert "QA / Quality Owner" in body
 
-    def test_confluence_body_sprint_snapshot(self):
-        """Test that Sprint Snapshot shows both metrics and status breakdown."""
+    def test_confluence_body_sprint_metrics(self):
+        """Test that Sprint Metrics section shows health and delivery data."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
-                "sprint_name": "Progress Sprint",
+                "sprint_name": "Metrics Sprint",
                 "issues": [
-                    {"issue_key": "T-1", "title": "Todo item", "labels": [], "status": "To Do"},
-                    {"issue_key": "T-2", "title": "Done item", "labels": [], "status": "Done"},
+                    {"issue_key": "SM-1", "title": "Story", "status": "To Do", "labels": []}
                 ]
             }
         )
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
-        assert "<h2>Sprint Snapshot</h2>" in body
+        assert "<h2>Sprint Metrics</h2>" in body
         assert "Sprint Health Score" in body
-        assert "To Do" in body
-        assert "Done" in body
-        assert "Blocked / Flagged" in body
+        assert "Delivery Confidence" in body
+        assert "Blocked / Flagged" not in body
 
     def test_confluence_body_issue_link_auto_generated(self):
         """Test that issue links are auto-generated when no issue_url is provided."""
@@ -894,10 +892,10 @@ class TestConfluenceBodyCompleteness:
         required = [
             "<h2>Executive Summary</h2>",
             "<h2>Stakeholders</h2>",
-            "<h2>Sprint Snapshot</h2>",
+            "<h2>Sprint Metrics</h2>",
             "<h2>Sprint Scope</h2>",
-            "<h2>QA Focus Areas</h2>",
             "<h2>Decision Needed</h2>",
+            "<h2>QA / Delivery Focus Areas</h2>",
         ]
         for section in required:
             assert section in body, f"Missing section: {section}"
@@ -978,7 +976,7 @@ class TestConfluenceBodyCompleteness:
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
         target = "<li>Maintain 97% pass rate on new feature tests and regression suite.</li>"
-        qa_section_start = body.find("<h2>QA Focus Areas</h2>")
+        qa_section_start = body.find("<h2>QA / Delivery Focus Areas</h2>")
         assert qa_section_start != -1
         target_pos = body.find(target, qa_section_start)
         assert target_pos != -1, "97% target not found in QA section"
