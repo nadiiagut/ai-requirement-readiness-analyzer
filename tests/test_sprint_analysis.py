@@ -961,3 +961,125 @@ class TestConfluenceBodyCompleteness:
         # target must appear before the closing </ul> of that section
         ul_close = body.find("</ul>", qa_section_start)
         assert target_pos < ul_close
+
+
+class TestJiraFieldOwnership:
+    """Jira fields (status, assignee, issue_url) must come from input unchanged."""
+
+    def test_jira_status_preserved_through_full_endpoint(self):
+        """Status from Jira input must appear verbatim in confluence_page_body_storage."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Status Test",
+                "issues": [
+                    {
+                        "issue_key": "ST-1",
+                        "title": "Deploy pipeline",
+                        "status": "In Review",
+                        "labels": []
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Jira status preserved in sprint_scope model
+        assert data["sprint_scope"][0]["status"] == "In Review"
+        # And rendered in Confluence body
+        assert "<td>In Review</td>" in data["confluence_page_body_storage"]
+
+    def test_jira_assignee_preserved_through_full_endpoint(self):
+        """Assignee from Jira input must appear verbatim in confluence_page_body_storage."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Assignee Test",
+                "issues": [
+                    {
+                        "issue_key": "AT-1",
+                        "title": "Setup auth",
+                        "assignee": "Jane Doe",
+                        "labels": []
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sprint_scope"][0]["assignee"] == "Jane Doe"
+        assert "<td>Jane Doe</td>" in data["confluence_page_body_storage"]
+
+    def test_missing_status_shows_unknown_in_body(self):
+        """When status is omitted, Sprint Scope must render 'Unknown' in the body."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Unknown Status Sprint",
+                "issues": [
+                    {"issue_key": "US-1", "title": "Orphan story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        body = data["confluence_page_body_storage"]
+        # status field is absent in input → sprint_scope status must be None
+        assert data["sprint_scope"][0]["status"] is None
+        # Rendered as Unknown, not "-"
+        assert "<td>Unknown</td>" in body
+        assert "<td>-</td>" not in body
+
+    def test_missing_assignee_shows_unassigned_in_body(self):
+        """When assignee is omitted, Sprint Scope must render 'Unassigned' in the body."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Unassigned Sprint",
+                "issues": [
+                    {"issue_key": "UA-1", "title": "No owner story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        body = data["confluence_page_body_storage"]
+        assert data["sprint_scope"][0]["assignee"] is None
+        assert "<td>Unassigned</td>" in body
+        assert "<td>-</td>" not in body
+
+    def test_provided_issue_url_used_as_link_href(self):
+        """When issue_url is provided in input, it must be the href in Sprint Scope."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "URL Sprint",
+                "issues": [
+                    {
+                        "issue_key": "URL-1",
+                        "title": "Custom URL story",
+                        "issue_url": "https://custom.atlassian.net/browse/URL-1",
+                        "labels": []
+                    }
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        body = data["confluence_page_body_storage"]
+        assert '<a href="https://custom.atlassian.net/browse/URL-1">URL-1</a>' in body
+
+    def test_missing_issue_url_generates_fallback_link(self):
+        """When issue_url is absent, link must be auto-generated from base URL + issue key."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Fallback URL Sprint",
+                "issues": [
+                    {"issue_key": "FB-99", "title": "No URL story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert '<a href="https://nadingut.atlassian.net/browse/FB-99">FB-99</a>' in body

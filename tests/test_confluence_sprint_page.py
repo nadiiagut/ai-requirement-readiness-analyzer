@@ -191,7 +191,79 @@ class TestRenderConfluenceSprintPage:
         body = result["page_body_storage"]
         assert "<th>Status</th>" in body
         assert "To Do" in body  # From default sprint_scope
-    
+
+    def test_jira_status_preserved_exactly(self):
+        """Status from Jira input must appear verbatim in Sprint Scope — not inferred."""
+        scope = [
+            SprintScopeEntry(issue_key="J-1", title="Story A", assignee="Alice",
+                             status="In Review", risk="Low", reason="r", notes="n", issue_url=None),
+        ]
+        analysis = _sample_sprint_analysis(sprint_scope=scope)
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        assert "<td>In Review</td>" in body
+
+    def test_jira_assignee_preserved_exactly(self):
+        """Assignee from Jira input must appear verbatim in Sprint Scope — not inferred."""
+        scope = [
+            SprintScopeEntry(issue_key="J-2", title="Story B", assignee="Bob Smith",
+                             status="To Do", risk="Low", reason="r", notes="n", issue_url=None),
+        ]
+        analysis = _sample_sprint_analysis(sprint_scope=scope)
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        assert "<td>Bob Smith</td>" in body
+
+    def test_missing_status_shows_unknown(self):
+        """When status is None, Sprint Scope must show 'Unknown', not '-' or blank."""
+        scope = [
+            SprintScopeEntry(issue_key="J-3", title="Story C", assignee="Dev",
+                             status=None, risk="Low", reason="r", notes="n", issue_url=None),
+        ]
+        analysis = _sample_sprint_analysis(sprint_scope=scope)
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        assert "<td>Unknown</td>" in body
+        assert "<td>-</td>" not in body
+
+    def test_missing_assignee_shows_unassigned(self):
+        """When assignee is None, Sprint Scope must show 'Unassigned', not '-' or blank."""
+        scope = [
+            SprintScopeEntry(issue_key="J-4", title="Story D", assignee=None,
+                             status="To Do", risk="Low", reason="r", notes="n", issue_url=None),
+        ]
+        analysis = _sample_sprint_analysis(sprint_scope=scope)
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        assert "<td>Unassigned</td>" in body
+        assert "<td>-</td>" not in body
+
+    def test_provided_issue_url_rendered_as_link(self):
+        """When issue_url is provided, it must be used as the href — not overridden."""
+        scope = [
+            SprintScopeEntry(issue_key="J-5", title="Story E", assignee="Dev",
+                             status="To Do", risk="Low", reason="r", notes="n",
+                             issue_url="https://custom.atlassian.net/browse/J-5"),
+        ]
+        analysis = _sample_sprint_analysis(sprint_scope=scope)
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        assert '<a href="https://custom.atlassian.net/browse/J-5">J-5</a>' in body
+
+    def test_ai_risk_does_not_overwrite_jira_status(self):
+        """AI risk level must not replace or mutate the Jira status field."""
+        scope = [
+            SprintScopeEntry(issue_key="J-6", title="Story F", assignee="Dev",
+                             status="Done", risk="High", reason="High risk", notes="n", issue_url=None),
+        ]
+        analysis = _sample_sprint_analysis(sprint_scope=scope)
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        # Jira status must appear unchanged
+        assert "<td>Done</td>" in body
+        # AI risk appears in its own column
+        assert "<td>High</td>" in body
+
     def test_body_does_not_contain_removed_sections(self):
         """Test that removed sections are not present."""
         analysis = _sample_sprint_analysis()

@@ -1329,8 +1329,8 @@ def _render_confluence_sprint_body(
             if hasattr(entry, 'issue_key'):
                 issue_key = entry.issue_key
                 title = entry.title
-                assignee = entry.assignee or "-"
-                status = entry.status or "-"
+                assignee = entry.assignee or "Unassigned"
+                status = entry.status or "Unknown"
                 risk = entry.risk
                 reason = entry.reason
                 notes = entry.notes
@@ -1338,8 +1338,8 @@ def _render_confluence_sprint_body(
             else:
                 issue_key = entry.get('issue_key', '')
                 title = entry.get('title', '')
-                assignee = entry.get('assignee') or "-"
-                status = entry.get('status') or "-"
+                assignee = entry.get('assignee') or "Unassigned"
+                status = entry.get('status') or "Unknown"
                 risk = entry.get('risk', 'Medium')
                 reason = entry.get('reason', '')
                 notes = entry.get('notes', '')
