@@ -359,6 +359,7 @@ class DecisionEntry(BaseModel):
 class SprintAnalysisResponse(BaseModel):
     """Response body for /analyze/sprint endpoint."""
     sprint_name: str = Field(..., description="Sprint name")
+    sprint_id: Optional[int] = Field(default=None, description="Sprint ID used in Jira macro for live board")
     context_distribution: dict[str, int] = Field(
         ..., 
         description="Distribution of domain contexts across sprint issues (context_name -> issue_count)"
@@ -1249,12 +1250,14 @@ def _render_confluence_sprint_body(
     sprint_scope: list,
     qa_focus_areas: list,
     decisions_needed: list,
+    sprint_id: Optional[int] = None,
 ) -> tuple[str, str]:
     """
     Render sprint analysis as stakeholder-facing Confluence storage-format HTML.
 
     Returns (page_title, page_body_storage).
-    Uses only safe tags: h1, h2, p, table, tr, th, td, ul, li, strong, a.
+    Uses safe HTML tags (h1, h2, p, table, tr, th, td, ul, li, strong, a) plus
+    ac:structured-macro for the live Jira sprint board integration.
     No markdown, no escaped newlines, no leading "=".
 
     Sections:
@@ -1263,9 +1266,10 @@ def _render_confluence_sprint_body(
     3. Stakeholders
     4. Sprint Metrics
     5. Progress Snapshot
-    6. Sprint Scope
-    7. QA / Delivery Focus Areas
-    8. Decision Needed
+    6. Live Sprint Scope  (Confluence Jira macro)
+    7. Delivery Risk Review (AI-generated risk table)
+    8. QA / Delivery Focus Areas
+    9. Decision Needed
     """
     parts = []
 
@@ -1320,17 +1324,26 @@ def _render_confluence_sprint_body(
         parts.append(f"<tr><td>{label}</td><td>{count}</td></tr>")
     parts.append("</table>")
 
-    # 6. Sprint Scope table
-    parts.append("<h2>Sprint Scope</h2>")
+    # 6. Live Sprint Scope — Confluence Jira macro
+    parts.append("<h2>Live Sprint Scope</h2>")
+    if sprint_id:
+        parts.append(
+            f'<ac:structured-macro ac:name="jira">'
+            f'<ac:parameter ac:name="jqlQuery">sprint = {sprint_id}</ac:parameter>'
+            f'</ac:structured-macro>'
+        )
+    else:
+        parts.append("<p>No sprint ID provided — live Jira board unavailable.</p>")
+
+    # 7. Delivery Risk Review — AI-generated risk analysis per issue
+    parts.append("<h2>Delivery Risk Review</h2>")
     if sprint_scope:
         parts.append("<table>")
-        parts.append("<tr><th>Issue</th><th>Title</th><th>Assignee</th><th>Status</th><th>Risk</th><th>Reason</th><th>Acceptance Criteria / Notes</th></tr>")
+        parts.append("<tr><th>Issue</th><th>Title</th><th>Risk</th><th>Reason</th><th>Acceptance Criteria / Notes</th></tr>")
         for entry in sprint_scope:
             if hasattr(entry, 'issue_key'):
                 issue_key = entry.issue_key
                 title = entry.title
-                assignee = entry.assignee or "Unassigned"
-                status = entry.status or "Unknown"
                 risk = entry.risk
                 reason = entry.reason
                 notes = entry.notes
@@ -1338,19 +1351,17 @@ def _render_confluence_sprint_body(
             else:
                 issue_key = entry.get('issue_key', '')
                 title = entry.get('title', '')
-                assignee = entry.get('assignee') or "Unassigned"
-                status = entry.get('status') or "Unknown"
                 risk = entry.get('risk', 'Medium')
                 reason = entry.get('reason', '')
                 notes = entry.get('notes', '')
                 issue_url = entry.get('issue_url')
             issue_cell = _issue_link(issue_key, issue_url)
-            parts.append(f"<tr><td>{issue_cell}</td><td>{title}</td><td>{assignee}</td><td>{status}</td><td>{risk}</td><td>{reason}</td><td>{notes}</td></tr>")
+            parts.append(f"<tr><td>{issue_cell}</td><td>{title}</td><td>{risk}</td><td>{reason}</td><td>{notes}</td></tr>")
         parts.append("</table>")
     else:
         parts.append("<p>No issues in sprint scope.</p>")
 
-    # 7. QA / Delivery Focus Areas
+    # 8. QA / Delivery Focus Areas
     parts.append("<h2>QA / Delivery Focus Areas</h2>")
     parts.append("<ul>")
     parts.append("<li>Maintain 97% pass rate on new feature tests and regression suite.</li>")
@@ -1358,7 +1369,7 @@ def _render_confluence_sprint_body(
         parts.append(f"<li>{area}</li>")
     parts.append("</ul>")
 
-    # 8. Decision Needed
+    # 9. Decision Needed
     parts.append("<h2>Decision Needed</h2>")
     if decisions_needed:
         parts.append("<table>")
@@ -1401,6 +1412,7 @@ def _render_confluence_sprint_page(analysis: "SprintAnalysisResponse") -> dict:
         sprint_scope=analysis.sprint_scope,
         qa_focus_areas=analysis.qa_focus_areas,
         decisions_needed=analysis.decisions_needed,
+        sprint_id=analysis.sprint_id,
     )
     return {
         "page_title": page_title,
@@ -1843,10 +1855,12 @@ async def analyze_sprint(
         sprint_scope=sprint_scope,
         qa_focus_areas=qa_focus_areas,
         decisions_needed=decisions_needed,
+        sprint_id=request.sprint_id,
     )
 
     return SprintAnalysisResponse(
         sprint_name=request.sprint_name,
+        sprint_id=request.sprint_id,
         context_distribution=context_distribution,
         sprint_health_score=sprint_health,
         delivery_confidence=delivery_confidence,

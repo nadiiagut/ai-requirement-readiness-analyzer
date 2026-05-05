@@ -580,7 +580,8 @@ class TestSprintAnalysisConfluenceOutput:
         assert "<h2>Stakeholders</h2>" in body
         assert "<h2>Sprint Metrics</h2>" in body
         assert "<h2>Progress Snapshot</h2>" in body
-        assert "<h2>Sprint Scope</h2>" in body
+        assert "<h2>Live Sprint Scope</h2>" in body
+        assert "<h2>Delivery Risk Review</h2>" in body
         assert "<h2>QA / Delivery Focus Areas</h2>" in body
         assert "<h2>Decision Needed</h2>" in body
         # Should NOT contain removed sections
@@ -702,12 +703,12 @@ class TestSprintAnalysisConfluenceOutput:
         # Extract all HTML tags
         tags = re.findall(r'</?(\w+)', body)
         # Safe tags include 'a' for issue links
-        safe_tags = {"h1", "h2", "p", "ul", "li", "table", "tr", "th", "td", "strong", "a"}
+        safe_tags = {"h1", "h2", "p", "ul", "li", "table", "tr", "th", "td", "strong", "a", "ac"}
         for tag in tags:
             assert tag in safe_tags, f"Unsafe tag found: {tag}"
     
     def test_confluence_body_includes_sprint_scope(self):
-        """Test that Sprint Scope table appears with issue data."""
+        """Test that Live Sprint Scope and Delivery Risk Review sections appear with issue data."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
@@ -727,12 +728,14 @@ class TestSprintAnalysisConfluenceOutput:
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
         
-        # Sprint Scope section should exist (not "Risky Sprint Entries")
-        assert "<h2>Sprint Scope</h2>" in body
-        # Issue key should appear in scope table
+        # Live Sprint Scope section (Jira macro fallback — no sprint_id provided)
+        assert "<h2>Live Sprint Scope</h2>" in body
+        assert "Risky Sprint Entries" not in body
+        # Delivery Risk Review table has the AI analysis
+        assert "<h2>Delivery Risk Review</h2>" in body
         assert "SCOPE-1" in body
-        # Status column should exist
-        assert "Status" in body
+        # Risk column present in Delivery Risk Review
+        assert "<th>Risk</th>" in body
     
     def test_confluence_body_issue_links(self):
         """Test that issue links are rendered when issue_url is provided."""
@@ -839,7 +842,7 @@ class TestConfluenceBodyCompleteness:
         assert "<h2>Executive Summary</h2>" in body
 
     def test_body_contains_sprint_scope_section(self):
-        """Body must contain the Sprint Scope heading."""
+        """Body must contain both Live Sprint Scope and Delivery Risk Review headings."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
@@ -851,7 +854,8 @@ class TestConfluenceBodyCompleteness:
         )
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
-        assert "<h2>Sprint Scope</h2>" in body
+        assert "<h2>Live Sprint Scope</h2>" in body
+        assert "<h2>Delivery Risk Review</h2>" in body
 
     def test_body_contains_all_required_sections(self):
         """Body must contain all 8 required stakeholder sections."""
@@ -871,7 +875,8 @@ class TestConfluenceBodyCompleteness:
             "<h2>Stakeholders</h2>",
             "<h2>Sprint Metrics</h2>",
             "<h2>Progress Snapshot</h2>",
-            "<h2>Sprint Scope</h2>",
+            "<h2>Live Sprint Scope</h2>",
+            "<h2>Delivery Risk Review</h2>",
             "<h2>QA / Delivery Focus Areas</h2>",
             "<h2>Decision Needed</h2>",
         ]
@@ -984,10 +989,10 @@ class TestJiraFieldOwnership:
         )
         assert response.status_code == 200
         data = response.json()
-        # Jira status preserved in sprint_scope model
+        # Jira status preserved in sprint_scope model (source of truth)
         assert data["sprint_scope"][0]["status"] == "In Review"
-        # And rendered in Confluence body
-        assert "<td>In Review</td>" in data["confluence_page_body_storage"]
+        # Live Sprint Scope section rendered (static table replaced by Jira macro)
+        assert "<h2>Live Sprint Scope</h2>" in data["confluence_page_body_storage"]
 
     def test_jira_assignee_preserved_through_full_endpoint(self):
         """Assignee from Jira input must appear verbatim in confluence_page_body_storage."""
@@ -1008,10 +1013,11 @@ class TestJiraFieldOwnership:
         assert response.status_code == 200
         data = response.json()
         assert data["sprint_scope"][0]["assignee"] == "Jane Doe"
-        assert "<td>Jane Doe</td>" in data["confluence_page_body_storage"]
+        # Assignee is preserved in the model; rendered live by Jira macro in Confluence
+        assert "<h2>Live Sprint Scope</h2>" in data["confluence_page_body_storage"]
 
-    def test_missing_status_shows_unknown_in_body(self):
-        """When status is omitted, Sprint Scope must render 'Unknown' in the body."""
+    def test_missing_status_null_in_model(self):
+        """When status is omitted, sprint_scope model status must be None (not inferred)."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
@@ -1023,15 +1029,13 @@ class TestJiraFieldOwnership:
         )
         assert response.status_code == 200
         data = response.json()
-        body = data["confluence_page_body_storage"]
-        # status field is absent in input → sprint_scope status must be None
+        # Status must be null in model — never inferred by AI
         assert data["sprint_scope"][0]["status"] is None
-        # Rendered as Unknown, not "-"
-        assert "<td>Unknown</td>" in body
-        assert "<td>-</td>" not in body
+        # Static status column is gone; live status rendered by Jira macro
+        assert "<h2>Live Sprint Scope</h2>" in data["confluence_page_body_storage"]
 
-    def test_missing_assignee_shows_unassigned_in_body(self):
-        """When assignee is omitted, Sprint Scope must render 'Unassigned' in the body."""
+    def test_missing_assignee_null_in_model(self):
+        """When assignee is omitted, sprint_scope model assignee must be None (not inferred)."""
         response = client.post(
             "/analyze/sprint?demo_mode=true",
             json={
@@ -1043,10 +1047,10 @@ class TestJiraFieldOwnership:
         )
         assert response.status_code == 200
         data = response.json()
-        body = data["confluence_page_body_storage"]
+        # Assignee must be null in model — never inferred by AI
         assert data["sprint_scope"][0]["assignee"] is None
-        assert "<td>Unassigned</td>" in body
-        assert "<td>-</td>" not in body
+        # Live assignee rendered by Jira macro in Confluence
+        assert "<h2>Live Sprint Scope</h2>" in data["confluence_page_body_storage"]
 
     def test_provided_issue_url_used_as_link_href(self):
         """When issue_url is provided in input, it must be the href in Sprint Scope."""
@@ -1083,3 +1087,77 @@ class TestJiraFieldOwnership:
         assert response.status_code == 200
         body = response.json()["confluence_page_body_storage"]
         assert '<a href="https://nadingut.atlassian.net/browse/FB-99">FB-99</a>' in body
+
+
+class TestJiraMacro:
+    """Tests for the Confluence Jira macro in Live Sprint Scope section."""
+
+    def test_jira_macro_rendered_when_sprint_id_provided(self):
+        """When sprint_id is given, body must contain the ac:structured-macro Jira block."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Macro Sprint",
+                "sprint_id": 42,
+                "issues": [
+                    {"issue_key": "MX-1", "title": "Story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        body = data["confluence_page_body_storage"]
+        assert data["sprint_id"] == 42
+        assert '<ac:structured-macro ac:name="jira">' in body
+        assert '<ac:parameter ac:name="jqlQuery">sprint = 42</ac:parameter>' in body
+        assert "</ac:structured-macro>" in body
+
+    def test_jira_macro_fallback_when_no_sprint_id(self):
+        """When sprint_id is absent, fallback message renders instead of macro."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "No ID Sprint",
+                "issues": [
+                    {"issue_key": "NI-1", "title": "Story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        body = data["confluence_page_body_storage"]
+        assert data["sprint_id"] is None
+        assert "ac:structured-macro" not in body
+        assert "No sprint ID provided" in body
+
+    def test_sprint_id_preserved_in_response(self):
+        """sprint_id from input must appear unchanged in the response model."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "ID Test",
+                "sprint_id": 101,
+                "issues": [
+                    {"issue_key": "ID-1", "title": "Story", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        assert response.json()["sprint_id"] == 101
+
+    def test_delivery_risk_review_present_with_sprint_id(self):
+        """Delivery Risk Review table must still be present when sprint_id is provided."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Risk Review Sprint",
+                "sprint_id": 7,
+                "issues": [
+                    {"issue_key": "RR-1", "title": "Feature X", "labels": ["needs-refinement"]}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "<h2>Delivery Risk Review</h2>" in body
+        assert "RR-1" in body

@@ -144,8 +144,8 @@ class TestRenderConfluenceSprintPage:
         assert "High Risk Items" in body
         assert "Items Needing Clarification" in body
     
-    def test_body_contains_sprint_scope_table(self):
-        """Test that body contains Sprint Scope table (not 'Risky Sprint Entries')."""
+    def test_body_contains_sprint_scope_sections(self):
+        """Body has Live Sprint Scope (Jira macro) + Delivery Risk Review (AI table)."""
         scope_entry = SprintScopeEntry(
             issue_key="NG-1",
             title="Test Feature",
@@ -159,11 +159,14 @@ class TestRenderConfluenceSprintPage:
         analysis = _sample_sprint_analysis(sprint_scope=[scope_entry])
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        assert "<h2>Sprint Scope</h2>" in body
+        # Live Sprint Scope uses Jira macro (no sprint_id → fallback message)
+        assert "<h2>Live Sprint Scope</h2>" in body
         assert "Risky Sprint Entries" not in body
+        # Delivery Risk Review has AI-generated analysis
+        assert "<h2>Delivery Risk Review</h2>" in body
         assert "NG-1" in body
         assert "Test Feature" in body
-        assert "John Doe" in body
+        assert "High" in body
         assert "In Progress" in body
         assert "High" in body
     
@@ -192,51 +195,53 @@ class TestRenderConfluenceSprintPage:
         assert "<th>Status</th>" in body
         assert "To Do" in body  # From default sprint_scope
 
-    def test_jira_status_preserved_exactly(self):
-        """Status from Jira input must appear verbatim in Sprint Scope — not inferred."""
+    def test_jira_status_preserved_in_model(self):
+        """Status from Jira input must be preserved in sprint_scope model — not inferred."""
         scope = [
             SprintScopeEntry(issue_key="J-1", title="Story A", assignee="Alice",
                              status="In Review", risk="Low", reason="r", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
+        # Status is preserved in model; rendered live by Jira macro — not in static HTML
+        assert analysis.sprint_scope[0].status == "In Review"
+        # Live Sprint Scope section is present in the rendered body
         result = _render_confluence_sprint_page(analysis)
-        body = result["page_body_storage"]
-        assert "<td>In Review</td>" in body
+        assert "<h2>Live Sprint Scope</h2>" in result["page_body_storage"]
 
-    def test_jira_assignee_preserved_exactly(self):
-        """Assignee from Jira input must appear verbatim in Sprint Scope — not inferred."""
+    def test_jira_assignee_preserved_in_model(self):
+        """Assignee from Jira input must be preserved in sprint_scope model — not inferred."""
         scope = [
             SprintScopeEntry(issue_key="J-2", title="Story B", assignee="Bob Smith",
                              status="To Do", risk="Low", reason="r", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
+        assert analysis.sprint_scope[0].assignee == "Bob Smith"
         result = _render_confluence_sprint_page(analysis)
-        body = result["page_body_storage"]
-        assert "<td>Bob Smith</td>" in body
+        assert "<h2>Live Sprint Scope</h2>" in result["page_body_storage"]
 
-    def test_missing_status_shows_unknown(self):
-        """When status is None, Sprint Scope must show 'Unknown', not '-' or blank."""
+    def test_missing_status_null_in_model(self):
+        """When status is None, sprint_scope model status must be None (never inferred)."""
         scope = [
             SprintScopeEntry(issue_key="J-3", title="Story C", assignee="Dev",
                              status=None, risk="Low", reason="r", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
+        assert analysis.sprint_scope[0].status is None
         result = _render_confluence_sprint_page(analysis)
+        # Static status column is gone; live status rendered by Jira macro
         body = result["page_body_storage"]
-        assert "<td>Unknown</td>" in body
-        assert "<td>-</td>" not in body
+        assert "<h2>Live Sprint Scope</h2>" in body
 
-    def test_missing_assignee_shows_unassigned(self):
-        """When assignee is None, Sprint Scope must show 'Unassigned', not '-' or blank."""
+    def test_missing_assignee_null_in_model(self):
+        """When assignee is None, sprint_scope model assignee must be None (never inferred)."""
         scope = [
             SprintScopeEntry(issue_key="J-4", title="Story D", assignee=None,
                              status="To Do", risk="Low", reason="r", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
+        assert analysis.sprint_scope[0].assignee is None
         result = _render_confluence_sprint_page(analysis)
-        body = result["page_body_storage"]
-        assert "<td>Unassigned</td>" in body
-        assert "<td>-</td>" not in body
+        assert "<h2>Live Sprint Scope</h2>" in result["page_body_storage"]
 
     def test_provided_issue_url_rendered_as_link(self):
         """When issue_url is provided, it must be used as the href — not overridden."""
@@ -251,18 +256,20 @@ class TestRenderConfluenceSprintPage:
         assert '<a href="https://custom.atlassian.net/browse/J-5">J-5</a>' in body
 
     def test_ai_risk_does_not_overwrite_jira_status(self):
-        """AI risk level must not replace or mutate the Jira status field."""
+        """AI risk level appears in Delivery Risk Review; Jira status preserved in model only."""
         scope = [
             SprintScopeEntry(issue_key="J-6", title="Story F", assignee="Dev",
                              status="Done", risk="High", reason="High risk", notes="n", issue_url=None),
         ]
         analysis = _sample_sprint_analysis(sprint_scope=scope)
+        # Jira status preserved in model, not rendered in static HTML
+        assert analysis.sprint_scope[0].status == "Done"
         result = _render_confluence_sprint_page(analysis)
         body = result["page_body_storage"]
-        # Jira status must appear unchanged
-        assert "<td>Done</td>" in body
-        # AI risk appears in its own column
+        # AI risk appears in Delivery Risk Review column
         assert "<td>High</td>" in body
+        # Delivery Risk Review section present
+        assert "<h2>Delivery Risk Review</h2>" in body
 
     def test_body_does_not_contain_removed_sections(self):
         """Test that removed sections are not present."""
