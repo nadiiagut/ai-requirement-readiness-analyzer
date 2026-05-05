@@ -191,80 +191,115 @@ class TestInferSprintThemes:
 class TestGenerateExecutiveSummary:
     """Tests for stakeholder-facing executive summary generation."""
 
-    def test_high_confidence_summary(self):
+    def _issue(self, title: str, desc: str = "") -> SprintIssue:
+        return SprintIssue(issue_key="X-1", title=title, description=desc, labels=[])
+
+    def test_single_issue_uses_title_directly(self):
+        """Single issue — title appears verbatim in summary."""
         summary = _generate_executive_summary(
             sprint_name="Sprint 1",
-            sprint_health=85,
             delivery_confidence="High",
-            total_issues=10,
-            high_risk_count=0,
-            needs_refinement_count=0,
-            issue_titles=["User role setup", "Access permissions"],
+            total_issues=1,
+            issues=[self._issue("Implement user login")],
         )
-        assert "access control" in summary
-        assert "high" in summary
-        assert "85/100" in summary
+        assert "Implement user login" in summary
 
-    def test_medium_confidence_with_refinement(self):
+    def test_few_issues_list_titles(self):
+        """Up to 3 issues — all titles listed in summary."""
         summary = _generate_executive_summary(
             sprint_name="Sprint 2",
-            sprint_health=60,
-            delivery_confidence="Medium",
-            total_issues=10,
-            high_risk_count=0,
-            needs_refinement_count=2,
-            issue_titles=[],
+            delivery_confidence="High",
+            total_issues=3,
+            issues=[
+                self._issue("Feature A"),
+                self._issue("Feature B"),
+                self._issue("Feature C"),
+            ],
         )
-        assert "medium" in summary
-        assert "unresolved acceptance criteria" in summary
-        assert "2 stories" in summary
+        assert "Feature A" in summary
+        assert "Feature B" in summary
+        assert "Feature C" in summary
 
-    def test_low_confidence_with_high_risk(self):
+    def test_theme_detected_from_titles(self):
+        """Themes inferred from titles appear in the delivery statement."""
+        issues = [self._issue("User role setup"), self._issue("Access permission management"),
+                  self._issue("X"), self._issue("Y"), self._issue("Z")]
         summary = _generate_executive_summary(
             sprint_name="Sprint 3",
-            sprint_health=30,
-            delivery_confidence="Low",
-            total_issues=10,
-            high_risk_count=3,
-            needs_refinement_count=0,
-            issue_titles=[],
+            delivery_confidence="High",
+            total_issues=5,
+            issues=issues,
         )
-        assert "low" in summary
-        assert "3 high-risk items" in summary
+        assert "access control" in summary
 
-    def test_summary_includes_health_score(self):
+    def test_description_used_for_theme_detection(self):
+        """Descriptions contribute to theme detection when 4+ issues present."""
+        issues = [
+            self._issue("Update X", "Changes to the payment gateway and billing flow."),
+            self._issue("Update Y", "Billing module integration."),
+            self._issue("A"), self._issue("B"), self._issue("C"),
+        ]
         summary = _generate_executive_summary(
-            sprint_name="Test Sprint",
-            sprint_health=75,
-            delivery_confidence="Medium",
-            total_issues=10,
-            high_risk_count=0,
-            needs_refinement_count=0,
-        )
-        assert "75/100" in summary
-
-    def test_no_issues_returns_message(self):
-        summary = _generate_executive_summary(
-            sprint_name="Empty Sprint",
-            sprint_health=0,
-            delivery_confidence="Low",
-            total_issues=0,
-            high_risk_count=0,
-            needs_refinement_count=0,
-        )
-        assert "no issues" in summary.lower()
-
-    def test_theme_in_summary(self):
-        summary = _generate_executive_summary(
-            sprint_name="S",
-            sprint_health=70,
+            sprint_name="Sprint 4",
             delivery_confidence="Medium",
             total_issues=5,
-            high_risk_count=0,
-            needs_refinement_count=0,
-            issue_titles=["Admin configuration", "Setup control panel"],
+            issues=issues,
+        )
+        assert "billing and payments" in summary
+
+    def test_business_outcome_present(self):
+        """Business outcome phrase from _OUTCOME_MAP appears in summary."""
+        issues = [self._issue("Admin config panel"), self._issue("Setup control panel settings"),
+                  self._issue("X"), self._issue("Y"), self._issue("Z")]
+        summary = _generate_executive_summary(
+            sprint_name="Sprint 5",
+            delivery_confidence="Medium",
+            total_issues=5,
+            issues=issues,
         )
         assert "configuration and admin" in summary
+        assert "operational control" in summary
+
+    def test_delivery_confidence_present(self):
+        """Delivery confidence level appears in summary."""
+        summary = _generate_executive_summary(
+            sprint_name="Sprint 6",
+            delivery_confidence="Low",
+            total_issues=2,
+            issues=[self._issue("A"), self._issue("B")],
+        )
+        assert "low" in summary.lower()
+
+    def test_no_risk_language_in_summary(self):
+        """Risk language must not appear — it belongs in Delivery Risk Review."""
+        summary = _generate_executive_summary(
+            sprint_name="Sprint 7",
+            delivery_confidence="Low",
+            total_issues=1,
+            issues=[self._issue("Incomplete feature", "Missing AC.")],
+        )
+        assert "high-risk" not in summary.lower()
+        assert "unresolved acceptance criteria" not in summary.lower()
+        assert "needs refinement" not in summary.lower()
+
+    def test_no_health_score_in_summary(self):
+        """Health score must not appear — it belongs in Sprint Snapshot."""
+        summary = _generate_executive_summary(
+            sprint_name="Sprint 8",
+            delivery_confidence="High",
+            total_issues=2,
+            issues=[self._issue("A"), self._issue("B")],
+        )
+        assert "/100" not in summary
+
+    def test_empty_sprint_returns_message(self):
+        """Zero issues produces a friendly fallback message."""
+        summary = _generate_executive_summary(
+            sprint_name="Empty Sprint",
+            delivery_confidence="Low",
+            total_issues=0,
+        )
+        assert "no issues" in summary.lower()
 
 
 class TestSprintAnalysisEndpoint:

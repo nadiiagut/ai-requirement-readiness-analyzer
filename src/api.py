@@ -1115,6 +1115,17 @@ _THEME_KEYWORDS: list[tuple[str, list[str]]] = [
     ("configuration and admin", ["config", "setting", "setup", "admin", "control panel", "operational"]),
 ]
 
+_OUTCOME_MAP: dict[str, str] = {
+    "access control": "strengthen user access management",
+    "user management": "improve user lifecycle and onboarding",
+    "authentication": "improve login security and session reliability",
+    "dashboard and reporting": "increase stakeholder visibility and data-driven decisions",
+    "billing and payments": "improve payment reliability and financial workflows",
+    "notifications": "improve alerting and communication reliability",
+    "API and integrations": "expand platform connectivity and integration coverage",
+    "configuration and admin": "increase operational control and flexibility",
+}
+
 
 def _infer_sprint_themes(issue_titles: list) -> list:
     """Infer up to 3 product/feature themes from issue titles."""
@@ -1130,32 +1141,55 @@ def _infer_sprint_themes(issue_titles: list) -> list:
 
 def _generate_executive_summary(
     sprint_name: str,
-    sprint_health: int,
     delivery_confidence: str,
     total_issues: int,
-    high_risk_count: int,
-    needs_refinement_count: int,
-    issue_titles: Optional[list] = None,
+    issues: Optional[list] = None,
 ) -> str:
-    """Generate a stakeholder-facing delivery summary for the sprint."""
+    """
+    Generate a stakeholder-facing executive summary focused on delivery.
+
+    Summarises what is being delivered, impacted systems, and business outcome.
+    Risk is intentionally excluded — it belongs in Delivery Risk Review.
+    """
     if total_issues == 0:
         return f"{sprint_name} has no issues to analyze."
 
-    themes = _infer_sprint_themes(issue_titles or [])
-    theme_text = " and ".join(themes) if themes else "various improvements"
+    issues = issues or []
 
-    confidence_phrase = delivery_confidence.lower()
-    risk_note = ""
-    if needs_refinement_count > 0:
-        risk_note = f" due to unresolved acceptance criteria on {needs_refinement_count} {'story' if needs_refinement_count == 1 else 'stories'}"
-    elif high_risk_count > 0:
-        risk_note = f" due to {high_risk_count} high-risk item{'s' if high_risk_count > 1 else ''} requiring attention"
+    # Build combined texts (title + description) for richer theme detection
+    titles: list[str] = []
+    combined_texts: list[str] = []
+    for issue in issues:
+        if hasattr(issue, 'title'):
+            title = issue.title
+            desc = str(issue.description or "")
+        else:
+            title = issue.get('title', '')
+            desc = str(issue.get('description', '') or "")
+        titles.append(title)
+        combined_texts.append(f"{title} {desc}")
 
-    return (
-        f"This sprint focuses on {theme_text}. "
-        f"Delivery confidence is {confidence_phrase}{risk_note}. "
-        f"Health: {sprint_health}/100."
-    )
+    # Infer themes from full issue text (titles + descriptions)
+    themes = _infer_sprint_themes(combined_texts)
+
+    # Delivery statement
+    if len(titles) == 1:
+        delivery = f"This sprint delivers: {titles[0]}."
+    elif len(titles) <= 3:
+        delivery = "This sprint delivers: " + "; ".join(titles) + "."
+    elif themes:
+        delivery = f"This sprint delivers {total_issues} items focused on " + " and ".join(themes) + "."
+    else:
+        delivery = f"This sprint delivers {total_issues} items."
+
+    # Business outcome derived from detected themes
+    outcomes = [_OUTCOME_MAP[t] for t in themes if t in _OUTCOME_MAP]
+    outcome = ("Intended outcome: " + " and ".join(outcomes[:2]) + ".") if outcomes else ""
+
+    # Delivery confidence (readiness signal — not a risk statement)
+    confidence = f"Delivery confidence: {delivery_confidence.lower()}."
+
+    return " ".join(p for p in [delivery, outcome, confidence] if p)
 
 
 _JIRA_BASE_URL = "https://nadingut.atlassian.net/browse"
@@ -1824,16 +1858,12 @@ async def analyze_sprint(
         else:
             recommended_actions.append("Monitor risky items during sprint execution.")
     
-    # Generate executive summary (stakeholder delivery-focused)
-    issue_titles = [issue.title for issue in request.issues]
+    # Generate executive summary (delivery-focused: what, systems, outcome)
     executive_summary = _generate_executive_summary(
         sprint_name=request.sprint_name,
-        sprint_health=sprint_health,
         delivery_confidence=delivery_confidence,
         total_issues=total_issues,
-        high_risk_count=high_risk_count,
-        needs_refinement_count=needs_refinement_count,
-        issue_titles=issue_titles,
+        issues=request.issues,
     )
 
     # Build decisions needed for stakeholder section
