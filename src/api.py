@@ -1352,13 +1352,11 @@ def _render_confluence_sprint_body(
 
     # 7. QA / Delivery Focus Areas
     parts.append("<h2>QA / Delivery Focus Areas</h2>")
-    if qa_focus_areas:
-        parts.append("<ul>")
-        for area in qa_focus_areas:
-            parts.append(f"<li>{area}</li>")
-        parts.append("</ul>")
-    else:
-        parts.append("<p>No specific focus areas identified.</p>")
+    parts.append("<ul>")
+    parts.append("<li>Maintain 97% pass rate on new feature tests and regression suite.</li>")
+    for area in qa_focus_areas:
+        parts.append(f"<li>{area}</li>")
+    parts.append("</ul>")
 
     # 8. Decision Needed
     parts.append("<h2>Decision Needed</h2>")

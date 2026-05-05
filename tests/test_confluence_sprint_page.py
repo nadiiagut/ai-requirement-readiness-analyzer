@@ -213,6 +213,24 @@ class TestRenderConfluenceSprintPage:
         assert "<h2>QA / Delivery Focus Areas</h2>" in body
         assert "<li>Edge case testing</li>" in body
 
+    def test_qa_section_contains_97_percent_target(self):
+        """QA section must always include the 97% pass-rate target as a bullet."""
+        analysis = _sample_sprint_analysis(qa_focus_areas=[])
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        assert "<li>Maintain 97% pass rate on new feature tests and regression suite.</li>" in body
+
+    def test_qa_section_97_target_present_alongside_dynamic_areas(self):
+        """Static 97% target appears before dynamic focus areas, both present."""
+        analysis = _sample_sprint_analysis(qa_focus_areas=["Integration testing"])
+        result = _render_confluence_sprint_page(analysis)
+        body = result["page_body_storage"]
+        target = "<li>Maintain 97% pass rate on new feature tests and regression suite.</li>"
+        dynamic = "<li>Integration testing</li>"
+        assert target in body
+        assert dynamic in body
+        assert body.index(target) < body.index(dynamic)
+
     def test_body_contains_stakeholders(self):
         """Test that Stakeholders section is present with default rows."""
         analysis = _sample_sprint_analysis()

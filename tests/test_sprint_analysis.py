@@ -924,3 +924,40 @@ class TestConfluenceBodyCompleteness:
         # Decision Needed should show fallback if no decisions detected
         if "No stakeholder decisions currently detected." in body:
             assert "<h2>Decision Needed</h2>" in body  # section heading still present
+
+    def test_qa_section_always_contains_97_percent_target(self):
+        """QA / Delivery Focus Areas must always include the 97% pass-rate target."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "QA Target Sprint",
+                "issues": [
+                    {"issue_key": "QT-1", "title": "Auth flow", "labels": []}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        assert "<li>Maintain 97% pass rate on new feature tests and regression suite.</li>" in body
+
+    def test_qa_97_target_is_first_bullet_before_dynamic_areas(self):
+        """Static 97% target appears before any dynamically-generated focus area."""
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={
+                "sprint_name": "Order Check Sprint",
+                "issues": [
+                    {"issue_key": "OC-1", "title": "Payment retry", "labels": ["needs-review"]}
+                ]
+            }
+        )
+        assert response.status_code == 200
+        body = response.json()["confluence_page_body_storage"]
+        target = "<li>Maintain 97% pass rate on new feature tests and regression suite.</li>"
+        qa_section_start = body.find("<h2>QA / Delivery Focus Areas</h2>")
+        assert qa_section_start != -1
+        target_pos = body.find(target, qa_section_start)
+        assert target_pos != -1, "97% target not found in QA section"
+        # target must appear before the closing </ul> of that section
+        ul_close = body.find("</ul>", qa_section_start)
+        assert target_pos < ul_close
