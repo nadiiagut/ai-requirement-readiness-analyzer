@@ -6,7 +6,7 @@ Analyze individual user stories to detect gaps and generate acceptance criteria,
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-281%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-326%20passed-brightgreen.svg)](#testing)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com/)
 
 ---
@@ -53,10 +53,9 @@ Stakeholder-facing sprint readiness dashboard with Confluence page generation.
 | **Sprint Health Score** | 0-100 label-based score (ready-for-sprint=90, needs-review=70, needs-refinement=45) |
 | **Delivery Confidence** | High/Medium/Low confidence rating for sprint completion |
 | **Stakeholder Summary** | Theme-aware executive summary for product owners and PMs |
-| **Sprint Scope Table** | All issues with risk, reason, and AC notes; issue key rendered as Jira link |
-| **Progress Snapshot** | Live status breakdown — To Do / In Progress / Done / Blocked |
+| **Sprint Scope Table** | All issues with Issue, Title, Status, Risk, Reason, AC/Notes; issue key as Jira link |
 | **Decision Needed** | Surfaces only the items where PM or stakeholder action is required |
-| **QA / Delivery Focus** | Prioritized areas for QA and delivery team attention |
+| **QA / Delivery Focus Areas** | Prioritized areas for QA and delivery team attention |
 | **Confluence Dashboard** | Storage-format HTML page ready to push via Confluence REST API |
 
 ---
@@ -331,7 +330,7 @@ Sprint analysis can be triggered by **Jira, GitLab, GitHub Projects, Azure DevOp
   "delivery_confidence": "Medium",
   "total_issues": 3,
   "high_risk_count": 1,
-  "clarification_count": 2,
+  "clarification_count": 1,
   "ready_count": 1,
   "needs_review_count": 1,
   "needs_refinement_count": 1,
@@ -366,9 +365,9 @@ Sprint analysis can be triggered by **Jira, GitLab, GitHub Projects, Azure DevOp
       "why_it_matters": "This item cannot be built without clear acceptance criteria."
     }
   ],
-  "executive_summary": "This sprint focuses on access control and configuration and admin. Delivery confidence is medium due to unresolved acceptance criteria on 1 story. Health: 68/100.",
+  "executive_summary": "This sprint delivers access control and configuration management improvements. Delivery confidence is medium.",
   "confluence_page_title": "Sprint 23 Dashboard",
-  "confluence_page_body_storage": "<h1>Sprint 23 Dashboard</h1><h2>Executive Summary</h2><p>...</p><h2>Stakeholders</h2><table>...</table><h2>Sprint Metrics</h2><table>...</table><h2>Progress Snapshot</h2><table>...</table><h2>Sprint Scope</h2><table>...</table><h2>QA / Delivery Focus Areas</h2><ul>...</ul><h2>Decision Needed</h2><p>No stakeholder decisions currently detected.</p>"
+  "confluence_page_body_storage": "<h1>Sprint 23 Dashboard</h1><h2>Executive Summary</h2><p>...</p><h2>Stakeholders</h2><table>...</table><h2>Sprint Metrics</h2><table>...</table><h2>Sprint Scope</h2><table>...</table><h2>Decision Needed</h2><table>...</table><h2>QA / Delivery Focus Areas</h2><ul>...</ul>"
 }
 ```
 
@@ -386,6 +385,10 @@ The endpoint classifies issues by label and assigns a weighted health score:
 | _(no label)_ | 65 | Unclassified |
 
 Health score = average across all issues, clamped 1–100. Returns 0 only when no issues are present.
+
+**Metric counting rules:**
+- `high_risk_count` — issues where readiness is `needs_refinement` or `not_ready`, or AI computed High/Critical risk without a ready label. `ready-for-sprint` issues are capped at Medium risk.
+- `clarification_count` — unique *issues* needing clarification (not total questions). An issue is counted once if it has clarification questions, is not-ready/needs-refinement, or its risk text mentions unclear/missing acceptance criteria.
 
 ### POST /format/confluence-sprint-page
 
@@ -406,13 +409,12 @@ The `page_body_storage` is stakeholder-facing Confluence storage-format HTML wit
 | # | Section | Content |
 |---|---------|---------|
 | 1 | **H1 title** | `{Sprint Name} Dashboard` |
-| 2 | **Executive Summary** | Delivery theme, confidence, and risk note |
+| 2 | **Executive Summary** | Delivery theme and confidence statement |
 | 3 | **Stakeholders** | Role / Name / Responsibility table |
-| 4 | **Sprint Metrics** | Health score, confidence, totals, risk counts |
-| 5 | **Progress Snapshot** | To Do / In Progress / Done / Blocked counts |
-| 6 | **Sprint Scope** | All issues with risk, reason, AC notes; issue keys as Jira links |
-| 7 | **QA / Delivery Focus Areas** | Prioritized QA focus list |
-| 8 | **Decision Needed** | Items requiring PM/stakeholder action, or "No decisions detected" |
+| 4 | **Sprint Metrics** | Health score, delivery confidence, total issues, high-risk count, clarification count |
+| 5 | **Sprint Scope** | All issues: Issue (linked) · Title · Status · Risk · Reason · AC / Notes |
+| 6 | **Decision Needed** | Items requiring PM/stakeholder action, or "No decisions detected" |
+| 7 | **QA / Delivery Focus Areas** | Prioritized QA focus list with 97% pass-rate target |
 
 Uses only safe HTML tags: `h1`, `h2`, `p`, `ul`, `li`, `table`, `tr`, `th`, `td`, `strong`, `a`.
 No markdown, no escaped `\n`, no leading `=` in title.
@@ -805,13 +807,16 @@ Requirements are scored 0-100 across seven dimensions:
 
 ### Completed
 - [x] Sprint-level risk summary and label-based health scoring
-- [x] Stakeholder-facing Confluence sprint dashboard
-- [x] Sprint Scope table with Jira issue links (auto-generated when no URL provided)
-- [x] Progress Snapshot (To Do / In Progress / Done / Blocked)
+- [x] Stakeholder-facing Confluence sprint dashboard (7-section layout)
+- [x] Sprint Scope table: Issue · Title · Status · Risk · Reason · AC/Notes with auto-generated Jira links
+- [x] Sprint Metrics: health score, delivery confidence, issue counts (correct issue-level counting)
 - [x] Decision Needed section for PM/stakeholder actions
 - [x] Stakeholders table with delivery and QA owner rows
-- [x] Theme-aware executive summary (infers product area from issue titles)
+- [x] Theme-aware executive summary (delivery-focused, no health score or risk language)
+- [x] QA / Delivery Focus Areas section with 97% pass-rate target
 - [x] Duplicate requirement detection
+- [x] Correct `high_risk_count` (ready-for-sprint issues capped at Medium risk)
+- [x] Correct `clarification_count` (counts unique issues, not total questions)
 
 ### Planned
 - [ ] Configurable stakeholders per sprint (not hardcoded)
