@@ -10,6 +10,7 @@ from src.api import (
     _compute_delivery_confidence,
     _generate_executive_summary,
     _infer_sprint_themes,
+    _issue_needs_clarification,
     SprintIssue,
     SprintAnalysisRequest,
     SprintAnalysisResponse,
@@ -1151,3 +1152,127 @@ class TestSprintIdModel:
         assert "<h2>Sprint Scope</h2>" in body
         assert "ST-1" in body
         assert "ac:structured-macro" not in body
+
+
+class TestSprintMetricsCounting:
+    """Tests for correct issue-level counting of sprint metrics."""
+
+    def _post(self, issues: list, sprint_name: str = "Counting Test") -> dict:
+        response = client.post(
+            "/analyze/sprint?demo_mode=true",
+            json={"sprint_name": sprint_name, "issues": issues},
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_total_issues_equals_input_count(self):
+        """total_issues must always equal len(request.issues)."""
+        issues = [
+            {"issue_key": f"C-{i}", "title": f"Story {i}", "labels": []}
+            for i in range(7)
+        ]
+        data = self._post(issues)
+        assert data["total_issues"] == 7
+
+    def test_clarification_count_is_issues_not_questions(self):
+        """clarification_count must be ≤ total_issues (counts issues, not questions).
+
+        7 vague issues each generate multiple AI clarification questions in demo
+        mode — the metric must still be ≤ 7.
+        """
+        issues = [
+            {"issue_key": f"Q-{i}", "title": f"Vague story {i}",
+             "description": "", "labels": []}
+            for i in range(7)
+        ]
+        data = self._post(issues)
+        assert data["clarification_count"] <= data["total_issues"], (
+            f"clarification_count ({data['clarification_count']}) exceeds "
+            f"total_issues ({data['total_issues']}) — counting questions instead of issues"
+        )
+
+    def test_clarification_count_never_exceeds_total_issues(self):
+        """clarification_count can never exceed total_issues under any label combination."""
+        for labels in (["needs-refinement"], ["needs-review"], ["ready-for-sprint"], []):
+            issues = [
+                {"issue_key": f"M-{i}", "title": f"Story {i}", "labels": labels}
+                for i in range(5)
+            ]
+            data = self._post(issues, sprint_name=f"Max Clarification {labels}")
+            assert data["clarification_count"] <= data["total_issues"], (
+                f"labels={labels}: clarification_count ({data['clarification_count']}) "
+                f"> total_issues ({data['total_issues']})"
+            )
+
+    def test_high_risk_count_zero_for_all_ready_issues(self):
+        """Issues labelled ready-for-sprint must not be counted as High Risk."""
+        issues = [
+            {"issue_key": f"R-{i}", "title": f"Ready story {i}",
+             "labels": ["ready-for-sprint"]}
+            for i in range(7)
+        ]
+        data = self._post(issues)
+        assert data["high_risk_count"] == 0, (
+            f"high_risk_count={data['high_risk_count']} but all issues are ready-for-sprint"
+        )
+
+    def test_needs_refinement_issues_are_high_risk(self):
+        """needs-refinement issues must be counted as High Risk; ready ones must not."""
+        issues = [
+            {"issue_key": "NR-1", "title": "Unready story", "labels": ["needs-refinement"]},
+            {"issue_key": "NR-2", "title": "Ready story",   "labels": ["ready-for-sprint"]},
+        ]
+        data = self._post(issues)
+        assert data["high_risk_count"] == 1, (
+            f"Expected 1 high-risk item (NR-1), got {data['high_risk_count']}"
+        )
+
+    def test_high_risk_count_never_exceeds_total_issues(self):
+        """high_risk_count can never exceed total_issues."""
+        issues = [
+            {"issue_key": f"H-{i}", "title": f"Story {i}", "labels": ["needs-refinement"]}
+            for i in range(4)
+        ]
+        data = self._post(issues)
+        assert data["high_risk_count"] <= data["total_issues"]
+
+
+class TestIssueNeedsClarification:
+    """Unit tests for the _issue_needs_clarification helper."""
+
+    def _issue(self, labels: list = None) -> SprintIssue:
+        return SprintIssue(issue_key="X-1", title="Test", labels=labels or [])
+
+    def test_returns_true_when_clarification_questions_exist(self):
+        result = {"clarification_count": 3, "readiness": "ready", "risks": []}
+        assert _issue_needs_clarification(result, self._issue()) is True
+
+    def test_returns_true_for_needs_refinement(self):
+        result = {"clarification_count": 0, "readiness": "needs_refinement", "risks": []}
+        assert _issue_needs_clarification(result, self._issue()) is True
+
+    def test_returns_true_for_not_ready(self):
+        result = {"clarification_count": 0, "readiness": "not_ready", "risks": []}
+        assert _issue_needs_clarification(result, self._issue()) is True
+
+    def test_returns_true_when_risk_text_mentions_clarification(self):
+        result = {"clarification_count": 0, "readiness": "needs_review",
+                  "risks": ["Clarification required on scope"]}
+        assert _issue_needs_clarification(result, self._issue()) is True
+
+    def test_returns_true_when_risk_text_mentions_unclear(self):
+        result = {"clarification_count": 0, "readiness": "needs_review",
+                  "risks": ["Unclear acceptance criteria"]}
+        assert _issue_needs_clarification(result, self._issue()) is True
+
+    def test_returns_true_for_needs_refinement_label(self):
+        result = {"clarification_count": 0, "readiness": "needs_refinement", "risks": []}
+        assert _issue_needs_clarification(result, self._issue(["needs-refinement"])) is True
+
+    def test_returns_false_for_clean_ready_issue(self):
+        result = {"clarification_count": 0, "readiness": "ready", "risks": ["Minor UX concern"]}
+        assert _issue_needs_clarification(result, self._issue(["ready-for-sprint"])) is False
+
+    def test_returns_false_when_no_signals(self):
+        result = {"clarification_count": 0, "readiness": "needs_review", "risks": []}
+        assert _issue_needs_clarification(result, self._issue()) is False

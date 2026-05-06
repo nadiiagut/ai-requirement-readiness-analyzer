@@ -1089,6 +1089,29 @@ def _generate_stakeholder_reason(readiness: str, risk_level: str, risks: list, c
     return "No QA risk detected"
 
 
+def _issue_needs_clarification(result: dict, issue: "SprintIssue") -> bool:
+    """
+    Return True if this issue needs clarification.
+
+    Each issue is counted at most once regardless of how many clarification
+    questions the AI generated.  Criteria (any one is sufficient):
+    - AI produced at least one clarification question
+    - Readiness is needs_refinement or not_ready
+    - Risk text mentions clarification / unclear / missing acceptance criteria
+    - Issue is labelled needs-refinement
+    """
+    if result["clarification_count"] > 0:
+        return True
+    if result["readiness"] in ("needs_refinement", "not_ready"):
+        return True
+    risk_text = " ".join(result.get("risks", [])).lower()
+    if any(kw in risk_text for kw in ("clarif", "unclear", "missing acceptance")):
+        return True
+    if "needs-refinement" in (issue.labels or []):
+        return True
+    return False
+
+
 def _generate_scope_notes(readiness: str, risk_level: str, clarification_count: int) -> str:
     """Generate short acceptance criteria / notes for the Sprint Scope table."""
     if readiness == "needs_refinement":
@@ -1717,8 +1740,15 @@ async def analyze_sprint(
     for i, r in enumerate(issue_results):
         issue = request.issues[i]
         risk_level = r["risk_level"]
-        # Normalize risk to Low/Medium/High
-        if risk_level in ["Critical", "High"]:
+        # Normalize risk to Low/Medium/High.
+        # needs_refinement / not_ready → always High (sprint risk regardless of AI score).
+        # ready issues are capped at Medium — a label-confirmed ready issue is not High Risk
+        # even if the AI found many potential risks in the requirement text.
+        if r["readiness"] in ("needs_refinement", "not_ready"):
+            normalized_risk = "High"
+        elif r["readiness"] == "ready" and risk_level in ("Critical", "High"):
+            normalized_risk = "Medium"
+        elif risk_level in ("Critical", "High"):
             normalized_risk = "High"
         elif risk_level == "Medium":
             normalized_risk = "Medium"
@@ -1746,8 +1776,11 @@ async def analyze_sprint(
     # Count high risk items
     high_risk_count = sum(1 for entry in sprint_scope if entry.risk == "High")
     
-    # Total clarification count
-    total_clarifications = sum(r["clarification_count"] for r in issue_results)
+    # Count of issues needing clarification — each issue counted at most once
+    issues_needing_clarification = sum(
+        1 for i, r in enumerate(issue_results)
+        if _issue_needs_clarification(r, request.issues[i])
+    )
     
     # Collect risky entries (deprecated, kept for backward compatibility)
     risky_entries = [
@@ -1813,10 +1846,10 @@ async def analyze_sprint(
         recommended_actions.append(
             f"Review {len(high_priority_risky)} high-priority risky item(s) with Product Owner"
         )
-    total_clarifications = sum(r["clarification_count"] for r in issue_results)
-    if total_clarifications > 5:
+    total_clarification_questions = sum(r["clarification_count"] for r in issue_results)
+    if total_clarification_questions > 5:
         recommended_actions.append(
-            f"Address {total_clarifications} clarification questions across sprint issues"
+            f"Address {total_clarification_questions} clarification questions across sprint issues"
         )
     if not recommended_actions:
         if delivery_confidence == "High":
@@ -1843,7 +1876,7 @@ async def analyze_sprint(
         delivery_confidence=delivery_confidence,
         total_issues=total_issues,
         high_risk_count=high_risk_count,
-        clarification_count=total_clarifications,
+        clarification_count=issues_needing_clarification,
         sprint_scope=sprint_scope,
         qa_focus_areas=qa_focus_areas,
         decisions_needed=decisions_needed,
@@ -1857,7 +1890,7 @@ async def analyze_sprint(
         delivery_confidence=delivery_confidence,
         total_issues=total_issues,
         high_risk_count=high_risk_count,
-        clarification_count=total_clarifications,
+        clarification_count=issues_needing_clarification,
         ready_count=ready_count,
         needs_review_count=needs_review_count,
         needs_refinement_count=needs_refinement_count,
